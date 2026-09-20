@@ -12,6 +12,7 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.27",
     "herbenzo-contracts @ file:///Users/shivasaimomula/Desktop/herbenzo-contracts",
+    "herbenzo-pubmed-cache @ file:///Users/shivasaimomula/Desktop/herbenzo-pubmed-cache",
 ]
 
 [project.optional-dependencies]

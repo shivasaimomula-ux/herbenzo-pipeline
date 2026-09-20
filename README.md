@@ -156,9 +156,9 @@ $ python -m herbenzo.cli adjudicate --pmid 37257749 \
 | Path | Role |
 |---|---|
 | `herbenzo/schemas/contracts.py` | Handoff contracts, confidence floor, citation guards |
-| `herbenzo/clients/pubmed.py` | NCBI E-utilities — search, fetch, retraction, pub-type tiers |
+| `herbenzo/clients/pubmed.py` | NCBI E-utilities — search, fetch; shared PMID cache (`herbenzo-pubmed-cache`) |
 | `herbenzo/clients/pubchem.py` | PubChem PUG-REST — CID resolution and descriptors |
-| `herbenzo/services/evidence.py` | Cache, retrieval dates, declared gaps |
+| `herbenzo/services/evidence.py` | Evidence store + manifest stamps over the shared cache |
 | `herbenzo/services/adjudication.py` | Citation adjudication service |
 | `herbenzo/services/registries.py` | Ingredient identity, markers, dose normalization |
 | `herbenzo/services/live_registries.py` | Cached descriptors with live PubChem fallback |
@@ -172,7 +172,21 @@ $ python -m herbenzo.cli adjudicate --pmid 37257749 \
 
 Both API clients cache every response to `cache/`, rate-limit themselves, and
 retry `429`/`5xx` with exponential backoff. A repeated run issues no network
-traffic at all.
+traffic at all while entries remain within TTL.
+
+### Shared PubMed / PMID cache (Task T16)
+
+Stage B is the evidence-layer owner. PMID files use the shared
+[`herbenzo-pubmed-cache`](../herbenzo-pubmed-cache) envelope
+(`pmid_<id>.json` + freshness stamp). Point **A / B / adjudication** at the
+same directory to cut duplicate NCBI spend:
+
+```bash
+export HERBENZO_PUBMED_CACHE_DIR="$HOME/Desktop/herbenzo_shared_cache/pubmed"
+export HERBENZO_PUBMED_CACHE_TTL_S=2592000   # 30 days; 0 = never expire
+```
+
+Default (env unset): `<cwd>/cache/pubmed` — same relative layout as before.
 
 ---
 

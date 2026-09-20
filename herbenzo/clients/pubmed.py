@@ -9,8 +9,11 @@ Configuration by environment variable — never hard-code either value:
 * ``NCBI_EMAIL``    — contact address. NCBI asks automated clients to identify
                       themselves; requests work without it but are deprioritised.
 * ``NCBI_API_KEY``  — optional. Raises the rate limit from 3 to 10 requests/second.
+* ``HERBENZO_PUBMED_CACHE_DIR`` / ``HERBENZO_PUBMED_CACHE_TTL_S`` — shared
+  PMID disk cache (Task T16 / Finding #14). Same directory as A / adjudication.
 
-Every response is cached to disk, so re-running the pipeline costs no network calls.
+Every response is cached to disk (TTL-aware), so re-running the pipeline costs
+no network calls while entries remain fresh.
 """
 
 from __future__ import annotations
@@ -24,6 +27,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+
+from herbenzo_pubmed_cache import PmidDiskCache
 
 __all__ = ["PubMedClient", "PubMedError", "Article"]
 
@@ -71,18 +76,25 @@ class Article(dict):
 class PubMedClient:
     def __init__(
         self,
-        cache_dir: str | pathlib.Path = "cache/pubmed",
+        cache_dir: str | pathlib.Path | None = None,
         email: str | None = None,
         api_key: str | None = None,
         timeout_s: float = 30.0,
         user_agent: str = "herbenzo-pipeline/1.0",
         max_retries: int = 5,
         backoff_base_s: float = 1.0,
+        ttl_seconds: int | None = None,
+        pmid_cache: PmidDiskCache | None = None,
     ) -> None:
         self.max_retries = max_retries
         self.backoff_base_s = backoff_base_s
-        self.cache_dir = pathlib.Path(cache_dir)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        if pmid_cache is not None:
+            self.cache = pmid_cache
+        else:
+            # Preserve historical default relative path when env unset.
+            root = cache_dir if cache_dir is not None else "cache/pubmed"
+            self.cache = PmidDiskCache(cache_dir=root, ttl_seconds=ttl_seconds)
+        self.cache_dir = pathlib.Path(self.cache.cache_dir)
         self.email = email or os.environ.get("NCBI_EMAIL")
         self.api_key = api_key or os.environ.get("NCBI_API_KEY")
         self.timeout_s = timeout_s
@@ -91,6 +103,10 @@ class PubMedClient:
         self.min_interval_s = 0.11 if self.api_key else 0.34
         self._lock = threading.Lock()
         self._last_call = 0.0
+
+    @property
+    def cache_stats(self) -> dict[str, int]:
+        return self.cache.stats.as_dict()
 
     # -- transport ----------------------------------------------------------
 
@@ -142,9 +158,9 @@ class PubMedClient:
         A total of 0 is a real, reportable result — the pipeline treats an empty
         search as evidence of absence to be declared, not a failure to retry.
         """
-        key = self.cache_dir / f"search_{_slug(query)}_{max_results}.json"
-        if key.exists():
-            return json.loads(key.read_text())
+        cached = self.cache.get_search(query, max_results)
+        if cached is not None:
+            return cached
 
         raw = self._call("esearch.fcgi", self._params(
             term=query, retmax=max_results, retmode="json", sort="relevance"))
@@ -154,7 +170,7 @@ class PubMedClient:
             "total": int(res.get("count", 0)),
             "pmids": list(res.get("idlist", [])),
         }
-        key.write_text(json.dumps(out, indent=1))
+        self.cache.put_search(query, max_results, out)
         return out
 
     def fetch(self, pmids: list[str]) -> dict[str, Article]:
@@ -163,9 +179,9 @@ class PubMedClient:
         found: dict[str, Article] = {}
         missing: list[str] = []
         for p in pmids:
-            f = self.cache_dir / f"pmid_{p}.json"
-            if f.exists():
-                found[p] = Article(json.loads(f.read_text()))
+            hit = self.cache.get_pmid(p)
+            if hit is not None:
+                found[p] = Article(hit)
             else:
                 missing.append(p)
 
@@ -175,8 +191,7 @@ class PubMedClient:
                 id=",".join(batch), retmode="xml"))
             for art in _parse_articles(raw):
                 found[art["pmid"]] = art
-                (self.cache_dir / f"pmid_{art['pmid']}.json").write_text(
-                    json.dumps(art, indent=1))
+                self.cache.put_pmid(art["pmid"], art)
         return found
 
 
@@ -238,7 +253,3 @@ def _parse_articles(raw: bytes) -> list[Article]:
             ],
         }))
     return out
-
-
-def _slug(text: str) -> str:
-    return "".join(c if c.isalnum() else "_" for c in text.lower())[:90]
