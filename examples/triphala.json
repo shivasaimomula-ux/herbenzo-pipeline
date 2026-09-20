@@ -1,0 +1,16 @@
+{
+  "formulation_id": "F-TRIP-001",
+  "product_name": "Triphala Churna",
+  "dosage_form": "powder",
+  "target_market": "EU",
+  "servings_per_day": 2,
+  "confidence": 0.80,
+  "ingredients": [
+    {"ingredient_id": "HB-HARI", "botanical_name": "Terminalia chebula",
+     "common_name": "Haritaki", "part_used": "fruit pericarp", "quantity_mg": 1000.0},
+    {"ingredient_id": "HB-BIBH", "botanical_name": "Terminalia bellirica",
+     "common_name": "Bibhitaki", "part_used": "fruit pericarp", "quantity_mg": 1000.0},
+    {"ingredient_id": "HB-AMLA", "botanical_name": "Phyllanthus emblica",
+     "common_name": "Amalaki", "part_used": "fruit", "quantity_mg": 1000.0}
+  ]
+}

@@ -1,0 +1,134 @@
+{
+ "Withaferin A": {
+  "marker_name": "Withaferin A",
+  "pubchem_cid": 265237,
+  "molecular_weight": 470.6,
+  "xlogp": 3.8,
+  "tpsa": 96.4,
+  "hbd": 2,
+  "hba": 6,
+  "rotatable_bonds": 3,
+  "source": "PubChem PUG-REST (computed descriptors)"
+ },
+ "Withanolide A": {
+  "marker_name": "Withanolide A",
+  "pubchem_cid": 11294368,
+  "molecular_weight": 470.6,
+  "xlogp": 3.3,
+  "tpsa": 96.4,
+  "hbd": 2,
+  "hba": 6,
+  "rotatable_bonds": 2,
+  "source": "PubChem PUG-REST (computed descriptors)"
+ },
+ "Curcumin": {
+  "marker_name": "Curcumin",
+  "pubchem_cid": 969516,
+  "molecular_weight": 368.4,
+  "xlogp": 3.2,
+  "tpsa": 93.1,
+  "hbd": 2,
+  "hba": 6,
+  "rotatable_bonds": 8,
+  "source": "PubChem PUG-REST (computed descriptors)"
+ },
+ "Berberine": {
+  "marker_name": "Berberine",
+  "pubchem_cid": 2353,
+  "molecular_weight": 336.4,
+  "xlogp": 3.6,
+  "tpsa": 40.8,
+  "hbd": 0,
+  "hba": 4,
+  "rotatable_bonds": 2,
+  "source": "PubChem PUG-REST (computed descriptors)"
+ },
+ "3-O-acetyl-11-keto-beta-boswellic acid": {
+  "marker_name": "3-O-acetyl-11-keto-beta-boswellic acid",
+  "pubchem_cid": 11168203,
+  "molecular_weight": 512.7,
+  "xlogp": 7.2,
+  "tpsa": 80.7,
+  "hbd": 1,
+  "hba": 5,
+  "rotatable_bonds": 3,
+  "source": "PubChem PUG-REST (computed descriptors)"
+ },
+ "Piperine": {
+  "marker_name": "Piperine",
+  "pubchem_cid": 638024,
+  "molecular_weight": 285.34,
+  "xlogp": 3.5,
+  "tpsa": 38.8,
+  "hbd": 0,
+  "hba": 3,
+  "rotatable_bonds": 3,
+  "source": "PubChem PUG-REST (computed descriptors)"
+ },
+ "Gallic acid": {
+  "marker_name": "Gallic acid",
+  "pubchem_cid": 370,
+  "molecular_weight": 170.12,
+  "xlogp": 0.7,
+  "tpsa": 98.0,
+  "hbd": 4,
+  "hba": 5,
+  "rotatable_bonds": 1,
+  "source": "PubChem PUG-REST (computed descriptors)"
+ },
+ "Chebulinic acid": {
+  "marker_name": "Chebulinic acid",
+  "pubchem_cid": 99937814,
+  "molecular_weight": 956.7,
+  "xlogp": 0.7,
+  "tpsa": 447.0,
+  "hbd": 13,
+  "hba": 27,
+  "rotatable_bonds": 12,
+  "source": "PubChem PUG-REST (computed descriptors)"
+ },
+ "Ellagic acid": {
+  "marker_name": "Ellagic acid",
+  "pubchem_cid": 5281855,
+  "molecular_weight": 302.19,
+  "xlogp": 1.1,
+  "tpsa": 134.0,
+  "hbd": 4,
+  "hba": 8,
+  "rotatable_bonds": 0,
+  "source": "PubChem PUG-REST (computed descriptors)"
+ },
+ "Cinnamaldehyde": {
+  "marker_name": "Cinnamaldehyde",
+  "pubchem_cid": 637511,
+  "molecular_weight": 132.16,
+  "xlogp": 1.9,
+  "tpsa": 17.1,
+  "hbd": 0,
+  "hba": 1,
+  "rotatable_bonds": 2,
+  "source": "PubChem PUG-REST (computed descriptors)"
+ },
+ "Eucalyptol": {
+  "marker_name": "Eucalyptol",
+  "pubchem_cid": 2758,
+  "molecular_weight": 154.25,
+  "xlogp": 2.5,
+  "tpsa": 9.2,
+  "hbd": 0,
+  "hba": 1,
+  "rotatable_bonds": 0,
+  "source": "PubChem PUG-REST (computed descriptors)"
+ },
+ "Quercetin": {
+  "marker_name": "Quercetin",
+  "pubchem_cid": 5280343,
+  "molecular_weight": 302.23,
+  "xlogp": 1.5,
+  "tpsa": 127.0,
+  "hbd": 5,
+  "hba": 7,
+  "rotatable_bonds": 1,
+  "source": "PubChem PUG-REST (computed descriptors)"
+ }
+}

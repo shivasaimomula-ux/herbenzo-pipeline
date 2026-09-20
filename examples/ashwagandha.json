@@ -1,0 +1,20 @@
+{
+  "formulation_id": "F-ASHW-001",
+  "product_name": "Ashwagandha Root Extract 500 mg",
+  "dosage_form": "capsule",
+  "target_market": "US",
+  "servings_per_day": 1,
+  "confidence": 0.85,
+  "ingredients": [
+    {
+      "ingredient_id": "HB-ASHW",
+      "botanical_name": "Withania somnifera",
+      "common_name": "Ashwagandha",
+      "part_used": "root",
+      "quantity_mg": 500.0,
+      "extract_ratio": "10:1",
+      "standardized_marker": "Withaferin A",
+      "standardized_percent": 5.0
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "herbenzo-pipeline"
+version = "1.0.0"
+description = "Reasoning core: Modernizer plus evidence retrieval and citation adjudication"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "herbenzo-contracts @ file:///Users/shivasaimomula/Desktop/herbenzo-contracts",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-cov>=4.0", "httpx>=0.27"]
+
+[project.scripts]
+herbenzo = "herbenzo.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["herbenzo*"]
+
+[tool.setuptools.package-data]
+herbenzo = ["data/*.json"]
