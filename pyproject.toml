@@ -24,4 +24,4 @@ herbenzo = "herbenzo.cli:main"
 include = ["herbenzo*"]
 
 [tool.setuptools.package-data]
-herbenzo = ["data/*.json"]
+herbenzo = ["data/*.json", "static/*"]

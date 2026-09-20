@@ -13,12 +13,12 @@ FormulationSpec ──▶ Component B ──▶ ModernizedSKU ──▶ adjudica
                         └── Citation Adjudication ────────────┘
 ```
 
-**Deterministic — no LLM on the modernize path.** Independent B UI is **Task T10**
-(not in this tree yet). Glue A→B→C is **Task T13**.
+**Deterministic — no LLM on the modernize path.** Independent B UI lives at
+`http://127.0.0.1:8003/` (Task T10). Glue A→B→C is **Task T13**.
 
 ---
 
-## HTTP API (port 8003)
+## HTTP API + UI (port 8003)
 
 ```bash
 cd ~/Desktop/herbenzo_pipeline
@@ -30,10 +30,21 @@ pip install -r requirements.txt
 uvicorn herbenzo.api:app --host 0.0.0.0 --port 8003
 ```
 
+Open the **independent Stage B UI** in a browser:
+
+```text
+http://127.0.0.1:8003/
+```
+
+Paste or upload a FormulationSpec JSON → **Modernize** → view ModernizedSKU
+(BCS, delivery, markers, confidence). Validation failures show as clear 422
+errors in the status panel. This UI is Stage B only — not embedded in C/E.
+
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/health` | Stage B health JSON |
-| `GET` | `/` | Same health JSON (placeholder; full UI → T10) |
+| `GET` | `/` | Independent B modernize UI (HTML) |
+| `GET` | `/static/*` | UI assets (CSS/JS) |
+| `GET` | `/health` | Stage B health JSON (`ui: available`) |
 | `POST` | `/modernize` | Body: `FormulationSpec` (herbenzo-contracts) → `ModernizedSKU` |
 
 ```bash
@@ -46,7 +57,6 @@ curl -s -X POST http://127.0.0.1:8003/modernize \
 Unknown fields / raised confidence floors → **422** with `herbenzo-contracts`
 `validation_error_body`. Unknown registry ingredient IDs → **422**
 (`unknown_ingredient`).
-
 ---
 
 ## CLI quick start
@@ -155,7 +165,8 @@ $ python -m herbenzo.cli adjudicate --pmid 37257749 \
 | `herbenzo/components/modernizer/` | BCS classifier, delivery recommender, orchestrator |
 | `herbenzo/pipeline.py` | End-to-end runner and report builder |
 | `herbenzo/cli.py` | Command line |
-| `herbenzo/api.py` | FastAPI: `GET /health`, `POST /modernize` on `:8003` |
+| `herbenzo/api.py` | FastAPI: UI at `/`, `GET /health`, `POST /modernize` on `:8003` |
+| `herbenzo/static/` | Independent B UI (HTML/CSS/JS) |
 | `herbenzo/contract_gate.py` | Shared-package FormulationSpec / ModernizedSKU gates |
 | `cache/` | On-disk response cache — delete to force re-retrieval |
 
@@ -194,7 +205,8 @@ berberine efflux override. Review them before anything ships.
 
 ## Not included
 
-Components A, C, E; independent B UI (**T10**); A→B→C glue (**T13**); persistence;
-authentication; per-country regulatory content. The modernize HTTP surface is
-live on `:8003`; the full CLI report path (evidence + adjudication) remains
-available via `python -m herbenzo.cli`.
+Components A, C, E; A→B dose/identity adapter (**T11**); C consuming ModernizedSKU
+(**T12**); A→B→C glue (**T13**); persistence; authentication; per-country
+regulatory content. The modernize HTTP surface and independent B UI are live on
+`:8003`; the full CLI report path (evidence + adjudication) remains available
+via `python -m herbenzo.cli`.
