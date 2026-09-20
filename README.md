@@ -177,7 +177,7 @@ traffic at all while entries remain within TTL.
 ### Shared PubMed / PMID cache (Task T16)
 
 Stage B is the evidence-layer owner. PMID files use the shared
-[`herbenzo-pubmed-cache`](../herbenzo-pubmed-cache) envelope
+[`herbenzo-pubmed-cache`](packages/herbenzo-pubmed-cache) envelope
 (`pmid_<id>.json` + freshness stamp). Point **A / B / adjudication** at the
 same directory to cut duplicate NCBI spend:
 
