@@ -68,6 +68,7 @@ pip install -r requirements.txt
 
 export NCBI_EMAIL="you@yourdomain.com"     # NCBI asks clients to identify themselves
 export NCBI_API_KEY="..."                  # optional; raises 3 → 10 requests/second
+# Or: cp .env.example .env  (Task T24 — never commit .env)
 
 python -m herbenzo.cli run examples/ashwagandha.json -o out/report.json
 ```
