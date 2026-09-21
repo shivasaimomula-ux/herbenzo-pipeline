@@ -13,12 +13,12 @@ FormulationSpec ──▶ Component B ──▶ ModernizedSKU ──▶ adjudica
                         └── Citation Adjudication ────────────┘
 ```
 
-**Deterministic — no LLM on the modernize path.** Independent B UI is **Task T10**
-(not in this tree yet). Glue A→B→C is **Task T13**.
+**Deterministic — no LLM on the modernize path.** Independent B UI lives at
+`http://127.0.0.1:8003/` (Task T10). Glue A→B→C is **Task T13**.
 
 ---
 
-## HTTP API (port 8003)
+## HTTP API + UI (port 8003)
 
 ```bash
 cd ~/Desktop/herbenzo_pipeline
@@ -30,10 +30,21 @@ pip install -r requirements.txt
 uvicorn herbenzo.api:app --host 0.0.0.0 --port 8003
 ```
 
+Open the **independent Stage B UI** in a browser:
+
+```text
+http://127.0.0.1:8003/
+```
+
+Paste or upload a FormulationSpec JSON → **Modernize** → view ModernizedSKU
+(BCS, delivery, markers, confidence). Validation failures show as clear 422
+errors in the status panel. This UI is Stage B only — not embedded in C/E.
+
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/health` | Stage B health JSON |
-| `GET` | `/` | Same health JSON (placeholder; full UI → T10) |
+| `GET` | `/` | Independent B modernize UI (HTML) |
+| `GET` | `/static/*` | UI assets (CSS/JS) |
+| `GET` | `/health` | Stage B health JSON (`ui: available`) |
 | `POST` | `/modernize` | Body: `FormulationSpec` (herbenzo-contracts) → `ModernizedSKU` |
 
 ```bash
@@ -46,7 +57,6 @@ curl -s -X POST http://127.0.0.1:8003/modernize \
 Unknown fields / raised confidence floors → **422** with `herbenzo-contracts`
 `validation_error_body`. Unknown registry ingredient IDs → **422**
 (`unknown_ingredient`).
-
 ---
 
 ## CLI quick start
@@ -58,6 +68,7 @@ pip install -r requirements.txt
 
 export NCBI_EMAIL="you@yourdomain.com"     # NCBI asks clients to identify themselves
 export NCBI_API_KEY="..."                  # optional; raises 3 → 10 requests/second
+# Or: cp .env.example .env  (Task T24 — never commit .env)
 
 python -m herbenzo.cli run examples/ashwagandha.json -o out/report.json
 ```
@@ -146,22 +157,37 @@ $ python -m herbenzo.cli adjudicate --pmid 37257749 \
 | Path | Role |
 |---|---|
 | `herbenzo/schemas/contracts.py` | Handoff contracts, confidence floor, citation guards |
-| `herbenzo/clients/pubmed.py` | NCBI E-utilities — search, fetch, retraction, pub-type tiers |
+| `herbenzo/clients/pubmed.py` | NCBI E-utilities — search, fetch; shared PMID cache (`herbenzo-pubmed-cache`) |
 | `herbenzo/clients/pubchem.py` | PubChem PUG-REST — CID resolution and descriptors |
-| `herbenzo/services/evidence.py` | Cache, retrieval dates, declared gaps |
+| `herbenzo/services/evidence.py` | Evidence store + manifest stamps over the shared cache |
 | `herbenzo/services/adjudication.py` | Citation adjudication service |
 | `herbenzo/services/registries.py` | Ingredient identity, markers, dose normalization |
 | `herbenzo/services/live_registries.py` | Cached descriptors with live PubChem fallback |
 | `herbenzo/components/modernizer/` | BCS classifier, delivery recommender, orchestrator |
 | `herbenzo/pipeline.py` | End-to-end runner and report builder |
 | `herbenzo/cli.py` | Command line |
-| `herbenzo/api.py` | FastAPI: `GET /health`, `POST /modernize` on `:8003` |
+| `herbenzo/api.py` | FastAPI: UI at `/`, `GET /health`, `POST /modernize` on `:8003` |
+| `herbenzo/static/` | Independent B UI (HTML/CSS/JS) |
 | `herbenzo/contract_gate.py` | Shared-package FormulationSpec / ModernizedSKU gates |
 | `cache/` | On-disk response cache — delete to force re-retrieval |
 
 Both API clients cache every response to `cache/`, rate-limit themselves, and
 retry `429`/`5xx` with exponential backoff. A repeated run issues no network
-traffic at all.
+traffic at all while entries remain within TTL.
+
+### Shared PubMed / PMID cache (Task T16)
+
+Stage B is the evidence-layer owner. PMID files use the shared
+[`herbenzo-pubmed-cache`](packages/herbenzo-pubmed-cache) envelope
+(`pmid_<id>.json` + freshness stamp). Point **A / B / adjudication** at the
+same directory to cut duplicate NCBI spend:
+
+```bash
+export HERBENZO_PUBMED_CACHE_DIR="$HOME/Desktop/herbenzo_shared_cache/pubmed"
+export HERBENZO_PUBMED_CACHE_TTL_S=2592000   # 30 days; 0 = never expire
+```
+
+Default (env unset): `<cwd>/cache/pubmed` — same relative layout as before.
 
 ---
 
@@ -194,7 +220,8 @@ berberine efflux override. Review them before anything ships.
 
 ## Not included
 
-Components A, C, E; independent B UI (**T10**); A→B→C glue (**T13**); persistence;
-authentication; per-country regulatory content. The modernize HTTP surface is
-live on `:8003`; the full CLI report path (evidence + adjudication) remains
-available via `python -m herbenzo.cli`.
+Components A, C, E; A→B dose/identity adapter (**T11**); C consuming ModernizedSKU
+(**T12**); A→B→C glue (**T13**); persistence; authentication; per-country
+regulatory content. The modernize HTTP surface and independent B UI are live on
+`:8003`; the full CLI report path (evidence + adjudication) remains available
+via `python -m herbenzo.cli`.

@@ -8,9 +8,12 @@ from typing import Any
 from pydantic import ValidationError
 
 from herbenzo_contracts import FormulationSpec, ModernizedSKU, validation_error_body
+from herbenzo_contracts.provenance import extend_from_handoff
 
 # Shared FormulationSpec fields the local engine schema does not accept (extra=forbid).
-_ENGINE_EXCLUDE = frozenset({"schema_version", "inherited_confidence", "source_spec_id"})
+_ENGINE_EXCLUDE = frozenset(
+    {"schema_version", "inherited_confidence", "source_spec_id", "provenance_thread"}
+)
 
 
 def validate_inbound_formulation_spec(payload: dict[str, Any] | FormulationSpec) -> FormulationSpec:
@@ -25,6 +28,23 @@ def to_engine_payload(spec: FormulationSpec) -> dict[str, Any]:
     for key in _ENGINE_EXCLUDE:
         data.pop(key, None)
     return data
+
+
+def attach_provenance_thread(spec: FormulationSpec, sku: ModernizedSKU) -> ModernizedSKU:
+    """Echo upstream IDs and append sku_id on the outbound ModernizedSKU (T22)."""
+    thread = extend_from_handoff(
+        spec.provenance_thread,
+        stage="B",
+        payload={
+            "spec_id": spec.source_spec_id,
+            "formulation_id": spec.formulation_id,
+            "sku_id": sku.sku_id,
+        },
+        sku_id=sku.sku_id,
+        formulation_id=spec.formulation_id,
+        spec_id=spec.source_spec_id,
+    )
+    return sku.model_copy(update={"provenance_thread": thread})
 
 
 def validate_outbound_modernized_sku(payload: dict[str, Any] | Any) -> ModernizedSKU:

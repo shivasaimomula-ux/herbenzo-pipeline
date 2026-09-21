@@ -1,4 +1,4 @@
-"""HTTP API tests for Stage B FastAPI service (Task T9)."""
+"""HTTP API tests for Stage B FastAPI service (Tasks T9–T10)."""
 
 from __future__ import annotations
 
@@ -30,18 +30,39 @@ def test_health_ok(client: TestClient):
     assert body["llm"] is False
     assert body["engine_version"] == ENGINE_VERSION
     assert body["contracts"] == "herbenzo-contracts"
-    assert body["ui"] == "deferred-to-T10"
+    assert body["ui"] == "available"
+    assert body["endpoints"]["ui"] == "/"
 
 
-def test_root_health_json(client: TestClient):
+def test_root_serves_ui(client: TestClient):
     r = client.get("/")
     assert r.status_code == 200
-    assert r.json()["status"] == "ok"
-    assert r.json()["port_contract"] == 8003
+    assert "text/html" in r.headers.get("content-type", "")
+    text = r.text
+    assert "Herbenzo" in text
+    assert "Stage B" in text
+    assert "FormulationSpec" in text
+    assert "/static/app.js" in text
+
+
+def test_static_assets_served(client: TestClient):
+    css = client.get("/static/styles.css")
+    assert css.status_code == 200
+    assert "text/css" in css.headers.get("content-type", "")
+    js = client.get("/static/app.js")
+    assert js.status_code == 200
+    assert "modernize" in js.text
 
 
 def test_modernize_ashwagandha(client: TestClient):
     raw = json.loads(EXAMPLE.read_text())
+    raw["source_spec_id"] = "spec-demo-1"
+    raw["provenance_thread"] = {
+        "schema_version": "1.0.0",
+        "spec_id": "spec-demo-1",
+        "formulation_id": "F-ASHW-001",
+        "stages": ["F", "A"],
+    }
     r = client.post("/modernize", json=raw)
     assert r.status_code == 200, r.text
     body = r.json()
@@ -55,6 +76,11 @@ def test_modernize_ashwagandha(client: TestClient):
     # Confidence may only fall.
     assert body["confidence"] <= raw["confidence"]
     assert body["inherited_confidence"] == raw["confidence"]
+    pt = body.get("provenance_thread") or {}
+    assert pt.get("spec_id") == "spec-demo-1"
+    assert pt.get("formulation_id") == "F-ASHW-001"
+    assert pt.get("sku_id") == "SKU-F-ASHW-001"
+    assert "B" in (pt.get("stages") or [])
 
 
 def test_modernize_rejects_unknown_field(client: TestClient):

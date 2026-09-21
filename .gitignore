@@ -1,3 +1,11 @@
+# Secrets & env (Task T24 / Audit #23)
+.env
+.env.*
+.env.txt
+!.env.example
+*.pem
+*.key
+
 __pycache__/
 *.pyc
 .venv/

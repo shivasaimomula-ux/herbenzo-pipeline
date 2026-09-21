@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Herbenzo · Stage B Modernizer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,500;7..72,700&family=Sora:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true"></div>
+  <main class="shell">
+    <header class="brand">
+      <p class="brand-mark">Herbenzo</p>
+      <h1>Stage B · Modernizer</h1>
+      <p class="lede">Paste or upload a FormulationSpec, modernize on :8003, inspect the ModernizedSKU.</p>
+    </header>
+
+    <section class="input-panel" aria-labelledby="input-heading">
+      <div class="panel-head">
+        <h2 id="input-heading">FormulationSpec</h2>
+        <div class="actions">
+          <button type="button" class="ghost" id="load-sample">Load sample</button>
+          <label class="ghost file-btn">
+            Upload JSON
+            <input type="file" id="file-input" accept=".json,application/json" hidden />
+          </label>
+        </div>
+      </div>
+      <textarea id="spec-input" spellcheck="false" rows="16" aria-label="FormulationSpec JSON"></textarea>
+      <div class="run-row">
+        <button type="button" class="primary" id="run-btn">Modernize</button>
+        <p class="hint">POST <code>/modernize</code> · same origin</p>
+      </div>
+    </section>
+
+    <section class="status-panel" id="status-panel" hidden aria-live="polite">
+      <p id="status-text"></p>
+    </section>
+
+    <section class="result-panel" id="result-panel" hidden aria-labelledby="result-heading">
+      <div class="panel-head">
+        <h2 id="result-heading">ModernizedSKU</h2>
+        <p class="meta" id="result-meta"></p>
+      </div>
+      <div id="sku-summary" class="sku-summary"></div>
+      <div id="ingredient-cards" class="ingredient-list"></div>
+      <details class="raw">
+        <summary>Raw JSON</summary>
+        <pre id="raw-json"></pre>
+      </details>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
