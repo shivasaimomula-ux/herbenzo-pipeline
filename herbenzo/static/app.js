@@ -121,6 +121,19 @@ function renderSku(sku) {
     ["Inherited confidence", pct(sku.inherited_confidence)],
     ["Market", sku.target_market],
   ];
+  const pt = sku.provenance_thread || {};
+  if (pt.spec_id || pt.formulation_id || pt.sku_id) {
+    summaryRows.push([
+      "Provenance",
+      [
+        pt.spec_id ? `spec_id=${pt.spec_id}` : null,
+        pt.formulation_id ? `formulation_id=${pt.formulation_id}` : null,
+        pt.sku_id ? `sku_id=${pt.sku_id}` : null,
+      ]
+        .filter(Boolean)
+        .join(" → "),
+    ]);
+  }
   el.skuSummary.innerHTML = summaryRows
     .map(
       ([k, v]) =>

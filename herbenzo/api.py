@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from herbenzo.components.modernizer.modernizer import ENGINE_VERSION, ModernizerEngine
 from herbenzo.contract_gate import (
+    attach_provenance_thread,
     http_error_detail,
     to_engine_payload,
     validate_inbound_formulation_spec,
@@ -100,6 +101,7 @@ async def modernize(request: Request):
         # Engine uses local schemas; strip shared-only fields at the boundary.
         sku = _ENGINE.modernize(to_engine_payload(spec))
         outbound = validate_outbound_modernized_sku(sku)
+        outbound = attach_provenance_thread(spec, outbound)
     except (UnknownIngredient, UnknownMarker) as exc:
         raise HTTPException(
             status_code=422,

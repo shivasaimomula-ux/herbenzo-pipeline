@@ -56,6 +56,13 @@ def test_static_assets_served(client: TestClient):
 
 def test_modernize_ashwagandha(client: TestClient):
     raw = json.loads(EXAMPLE.read_text())
+    raw["source_spec_id"] = "spec-demo-1"
+    raw["provenance_thread"] = {
+        "schema_version": "1.0.0",
+        "spec_id": "spec-demo-1",
+        "formulation_id": "F-ASHW-001",
+        "stages": ["F", "A"],
+    }
     r = client.post("/modernize", json=raw)
     assert r.status_code == 200, r.text
     body = r.json()
@@ -69,6 +76,11 @@ def test_modernize_ashwagandha(client: TestClient):
     # Confidence may only fall.
     assert body["confidence"] <= raw["confidence"]
     assert body["inherited_confidence"] == raw["confidence"]
+    pt = body.get("provenance_thread") or {}
+    assert pt.get("spec_id") == "spec-demo-1"
+    assert pt.get("formulation_id") == "F-ASHW-001"
+    assert pt.get("sku_id") == "SKU-F-ASHW-001"
+    assert "B" in (pt.get("stages") or [])
 
 
 def test_modernize_rejects_unknown_field(client: TestClient):
