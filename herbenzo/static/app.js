@@ -122,6 +122,16 @@ function renderSku(sku) {
     ["Market", sku.target_market],
   ];
   const pt = sku.provenance_thread || {};
+  const stages = Array.isArray(pt.stages)
+    ? pt.stages.join(",")
+    : pt.stages || "A,B";
+  const cReady = !!(sku.sku_id && (pt.sku_id || sku.sku_id));
+  summaryRows.push([
+    "Handoff",
+    cReady
+      ? `→C ready · stages=[${stages}]`
+      : `→C blocked · stages=[${stages}]`,
+  ]);
   if (pt.spec_id || pt.formulation_id || pt.sku_id) {
     summaryRows.push([
       "Provenance",
