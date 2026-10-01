@@ -61,6 +61,10 @@ const el = {
 let registry = [];
 const registryById = new Map();
 let currentDraftId = null;
+// Raw JSON starts as the sample. Copy the compose form over it only after the
+// form changes, and stop copying once the textarea itself has been edited.
+let composeTouched = false;
+let rawDirty = false;
 
 function setStatus(kind, message) {
   el.statusPanel.hidden = false;
@@ -132,8 +136,17 @@ function escapeHtml(s) {
     .replaceAll('"', "&quot;");
 }
 
+function writeRawFromCompose() {
+  el.input.value = JSON.stringify(buildSpec(), null, 2);
+  composeTouched = false;
+  rawDirty = false;
+}
+
 function showTab(which) {
   const compose = which === "compose";
+  if (!compose && composeTouched && !rawDirty) {
+    writeRawFromCompose();
+  }
   el.composePanel.hidden = !compose;
   el.rawPanel.hidden = compose;
   el.tabCompose.setAttribute("aria-selected", compose ? "true" : "false");
@@ -816,6 +829,7 @@ async function loadDraft(id) {
   currentDraftId = body.id;
   el.draftName.value = body.name || "";
   fillCompose(body.spec || {});
+  writeRawFromCompose();
   showTab("compose");
   renderDraftList(lastDrafts);
   const ready = body.complete ? "Ready to modernize." : "Incomplete — finish the form before running.";
@@ -840,8 +854,12 @@ async function deleteDraft(id, name) {
 el.tabCompose.addEventListener("click", () => showTab("compose"));
 el.tabRaw.addEventListener("click", () => showTab("raw"));
 
-el.ingredientEditors.addEventListener("input", updatePreview);
+el.ingredientEditors.addEventListener("input", () => {
+  composeTouched = true;
+  updatePreview();
+});
 el.ingredientEditors.addEventListener("change", (event) => {
+  composeTouched = true;
   const card = event.target.closest(".ing-editor");
   if (!card) return;
   if (event.target.classList.contains("ing-id")) {
@@ -874,16 +892,24 @@ el.ingredientEditors.addEventListener("click", (event) => {
   if (!el.ingredientEditors.querySelector(".ing-editor")) {
     el.ingredientEditors.insertAdjacentHTML("beforeend", cardHtml(blankIngredient()));
   }
+  composeTouched = true;
   updatePreview();
 });
 
 for (const node of [el.formulationId, el.productName, el.dosageForm, el.market, el.servings, el.confidence]) {
-  node.addEventListener("input", updatePreview);
-  node.addEventListener("change", updatePreview);
+  node.addEventListener("input", () => {
+    composeTouched = true;
+    updatePreview();
+  });
+  node.addEventListener("change", () => {
+    composeTouched = true;
+    updatePreview();
+  });
 }
 
 el.addIngredient.addEventListener("click", () => {
   el.ingredientEditors.insertAdjacentHTML("beforeend", cardHtml(blankIngredient()));
+  composeTouched = true;
   updatePreview();
   const cards = el.ingredientEditors.querySelectorAll(".ing-editor");
   const last = cards[cards.length - 1];
@@ -894,13 +920,14 @@ el.addIngredient.addEventListener("click", () => {
 el.loadSampleCompose.addEventListener("click", () => {
   currentDraftId = null;
   fillCompose(SAMPLE_SPEC);
+  writeRawFromCompose();
   if (!el.draftName.value.trim()) el.draftName.value = "Ashwagandha sample";
   renderDraftList(lastDrafts);
   setStatus("ok", "Loaded ashwagandha sample into the compose form.");
 });
 
 el.editJson.addEventListener("click", () => {
-  el.input.value = JSON.stringify(buildSpec(), null, 2);
+  writeRawFromCompose();
   showTab("raw");
   setStatus("ok", "Copied the compose form into the raw JSON editor.");
 });
@@ -929,6 +956,8 @@ el.draftList.addEventListener("click", (event) => {
 
 el.loadSample.addEventListener("click", () => {
   el.input.value = JSON.stringify(SAMPLE_SPEC, null, 2);
+  rawDirty = true;
+  composeTouched = false;
   setStatus("ok", "Loaded ashwagandha sample FormulationSpec.");
 });
 
@@ -939,6 +968,8 @@ el.file.addEventListener("change", async () => {
     const text = await file.text();
     JSON.parse(text);
     el.input.value = text;
+    rawDirty = true;
+    composeTouched = false;
     setStatus("ok", `Loaded ${file.name}`);
   } catch (err) {
     setStatus("error", `Could not load file: ${err.message}`);
@@ -948,6 +979,9 @@ el.file.addEventListener("change", async () => {
 });
 
 el.run.addEventListener("click", modernizeRaw);
+el.input.addEventListener("input", () => {
+  rawDirty = true;
+});
 el.input.value = JSON.stringify(SAMPLE_SPEC, null, 2);
 
 async function boot() {
