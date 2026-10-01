@@ -4,11 +4,19 @@ Run:
   uvicorn herbenzo.api:app --host 0.0.0.0 --port 8003
 
 Port 8003 is the Stage B contract. Independent B UI is served at ``/``.
+Compose drafts are JSON files under ``herbenzo/data/compose_drafts``
+(override with ``HERBENZO_COMPOSE_DRAFTS_DIR``). They are UI scaffolding only.
 """
 
 from __future__ import annotations
 
+import json
+import os
+import re
+import threading
+from datetime import UTC, datetime
 from pathlib import Path
+from secrets import token_hex
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -24,10 +32,18 @@ from herbenzo.contract_gate import (
     validate_inbound_formulation_spec,
     validate_outbound_modernized_sku,
 )
-from herbenzo.services.registries import UnknownIngredient, UnknownMarker
+from herbenzo.services.registries import (
+    UnknownIngredient,
+    UnknownMarker,
+    _INGREDIENTS,
+)
 from herbenzo_contracts import CONTRACT_SCHEMA_VERSION
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+_DEFAULT_DRAFTS_DIR = Path(__file__).resolve().parent / "data" / "compose_drafts"
+_DRAFT_ID = re.compile(r"^d[a-f0-9]{16}$")
+_DRAFT_LOCK = threading.Lock()
+_MAX_DRAFT_NAME = 120
 
 app = FastAPI(
     title="Herbenzo Modernizer (Stage B)",
@@ -56,8 +72,136 @@ def _health_payload() -> dict[str, Any]:
             "ui": "/",
             "health": "/health",
             "modernize": "POST /modernize",
+            "ingredients": "GET /ingredients",
+            "drafts": "GET/POST /drafts",
+            "draft": "GET/DELETE /drafts/{id}",
             "static": "/static/",
         },
+    }
+
+
+def _drafts_dir() -> Path:
+    raw = os.environ.get("HERBENZO_COMPOSE_DRAFTS_DIR")
+    if raw:
+        return Path(raw).expanduser()
+    return _DEFAULT_DRAFTS_DIR
+
+
+def _check_draft_id(draft_id: str) -> str:
+    if not _DRAFT_ID.fullmatch(draft_id or ""):
+        raise HTTPException(status_code=422, detail="Draft id is invalid")
+    return draft_id
+
+
+def _draft_path(draft_id: str) -> Path:
+    directory = _drafts_dir().resolve()
+    path = (directory / f"{draft_id}.json").resolve()
+    if path.parent != directory:
+        raise HTTPException(status_code=422, detail="Draft id is invalid")
+    return path
+
+
+def _spec_is_complete(spec: dict[str, Any]) -> bool:
+    """True when the stored object can be posted to /modernize.
+
+    Schema-valid and every ingredient id is in the stock registry. Unknown ids
+    still 422 from /modernize; those drafts stay incomplete.
+    """
+    try:
+        parsed = validate_inbound_formulation_spec(spec)
+    except (ValidationError, ValueError, TypeError):
+        return False
+    return all(ing.ingredient_id in _INGREDIENTS for ing in parsed.ingredients)
+
+
+def _ingredient_count(spec: Any) -> int:
+    if isinstance(spec, dict) and isinstance(spec.get("ingredients"), list):
+        return len(spec["ingredients"])
+    return 0
+
+
+def _read_draft_file(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def _public_draft(doc: dict[str, Any]) -> dict[str, Any]:
+    spec = doc.get("spec") if isinstance(doc.get("spec"), dict) else {}
+    return {
+        "id": doc.get("id"),
+        "name": doc.get("name"),
+        "saved_at": doc.get("saved_at"),
+        "updated_at": doc.get("updated_at"),
+        "complete": _spec_is_complete(spec),
+        "ingredient_count": _ingredient_count(spec),
+        "spec": spec,
+    }
+
+
+def _summary_draft(doc: dict[str, Any]) -> dict[str, Any]:
+    full = _public_draft(doc)
+    full.pop("spec", None)
+    return full
+
+
+def _write_draft(doc: dict[str, Any]) -> None:
+    directory = _drafts_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    path = _draft_path(str(doc["id"]))
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def _new_draft_id() -> str:
+    directory = _drafts_dir()
+    for _ in range(5):
+        draft_id = "d" + token_hex(8)
+        if not (directory / f"{draft_id}.json").exists():
+            return draft_id
+    raise HTTPException(status_code=500, detail="Could not allocate a draft id")
+
+
+def _parse_draft_body(payload: Any) -> tuple[str, dict[str, Any], str | None]:
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="Draft body must be a JSON object")
+    name = payload.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise HTTPException(status_code=422, detail="Draft name is required")
+    name = name.strip()
+    if len(name) > _MAX_DRAFT_NAME:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Draft name must be {_MAX_DRAFT_NAME} characters or fewer",
+        )
+    spec = payload.get("spec")
+    if not isinstance(spec, dict):
+        raise HTTPException(status_code=422, detail="Draft spec must be a JSON object")
+    draft_id = payload.get("id", None)
+    if draft_id is not None:
+        if not isinstance(draft_id, str):
+            raise HTTPException(status_code=422, detail="Draft id is invalid")
+        _check_draft_id(draft_id)
+    return name, spec, draft_id
+
+
+def _ingredient_row(rec: Any) -> dict[str, Any]:
+    return {
+        "ingredient_id": rec.ingredient_id,
+        "botanical_name": rec.botanical_name,
+        "common_name": rec.common_name,
+        "sanskrit_name": rec.sanskrit_name,
+        "synonyms": list(rec.synonyms),
+        "part_used": rec.part_used,
+        "markers": [
+            {"marker_name": marker.marker_name, "rationale": marker.rationale}
+            for marker in rec.markers
+        ],
     }
 
 
@@ -73,6 +217,95 @@ def root():
 @app.get("/health")
 def health():
     return _health_payload()
+
+
+@app.get("/ingredients")
+def ingredients():
+    """Stock registry rows the modernizer already uses. Read-only."""
+    return {"ingredients": [_ingredient_row(rec) for rec in _INGREDIENTS.values()]}
+
+
+@app.get("/drafts")
+def list_drafts():
+    """Named in-progress FormulationSpecs. Incomplete drafts are included."""
+    directory = _drafts_dir()
+    docs: list[dict[str, Any]] = []
+    if directory.is_dir():
+        for path in directory.glob("d*.json"):
+            if not _DRAFT_ID.fullmatch(path.stem):
+                continue
+            doc = _read_draft_file(path)
+            if doc is None or doc.get("id") != path.stem:
+                continue
+            docs.append(doc)
+    docs.sort(key=lambda doc: str(doc.get("updated_at") or ""), reverse=True)
+    return {"drafts": [_summary_draft(doc) for doc in docs]}
+
+
+@app.get("/drafts/{draft_id}")
+def get_draft(draft_id: str):
+    _check_draft_id(draft_id)
+    doc = _read_draft_file(_draft_path(draft_id))
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"No draft {draft_id}")
+    return _public_draft(doc)
+
+
+@app.post("/drafts")
+async def save_draft(request: Request):
+    """Create a named draft, or update one when ``id`` is an existing draft.
+
+    ``spec`` is stored as sent. It does not have to be a complete FormulationSpec.
+    ``complete`` is true only when that object would pass ``POST /modernize``.
+    """
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="Draft body must be JSON") from exc
+
+    name, spec, draft_id = _parse_draft_body(payload)
+    now = datetime.now(UTC).isoformat()
+    complete = _spec_is_complete(spec)
+
+    with _DRAFT_LOCK:
+        if draft_id is None:
+            draft_id = _new_draft_id()
+            doc = {
+                "id": draft_id,
+                "name": name,
+                "saved_at": now,
+                "updated_at": now,
+                "complete": complete,
+                "spec": spec,
+            }
+            _write_draft(doc)
+            status = 201
+        else:
+            existing = _read_draft_file(_draft_path(draft_id))
+            if existing is None:
+                raise HTTPException(status_code=404, detail=f"No draft {draft_id}")
+            doc = {
+                "id": draft_id,
+                "name": name,
+                "saved_at": existing.get("saved_at") or now,
+                "updated_at": now,
+                "complete": complete,
+                "spec": spec,
+            }
+            _write_draft(doc)
+            status = 200
+    return JSONResponse(status_code=status, content=_public_draft(doc))
+
+
+@app.delete("/drafts/{draft_id}")
+def delete_draft(draft_id: str):
+    _check_draft_id(draft_id)
+    path = _draft_path(draft_id)
+    with _DRAFT_LOCK:
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail=f"No draft {draft_id}")
+        path.unlink()
+    return {"deleted": True, "id": draft_id}
 
 
 @app.post("/modernize")

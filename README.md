@@ -36,15 +36,35 @@ Open the **independent Stage B UI** in a browser:
 http://127.0.0.1:8003/
 ```
 
-Paste or upload a FormulationSpec JSON → **Modernize** → view ModernizedSKU
-(BCS, delivery, markers, confidence). Validation failures show as clear 422
-errors in the status panel. This UI is Stage B only — not embedded in C/E.
+**Compose** (default tab) builds a FormulationSpec without hand-editing JSON:
+
+1. Set formulation id, product name, finished form (preset or any free text), market, servings per day, and confidence.
+2. Pick one or more registry ingredients. Botanical name, common name, and part fill from that row. Enter **amount as mg per serving** (`quantity_mg`). Extract ratio (`10:1`) and a standardization marker + percent are optional.
+3. The **FormulationSpec preview** is the JSON that will be posted.
+4. **Run Modernize** calls the existing `POST /modernize` and renders the ModernizedSKU. Advisory flags on the response (including `classical_active_marker_gap`, if a response includes it) show as a banner. They are not errors. Unknown ingredient ids still return **422**.
+
+**Advanced / Raw JSON** is the previous paste-or-upload path.
+
+**Drafts.** Name the form and **Save draft** before or after modernize. **Load** continues editing; **Delete** removes one. Drafts survive a page reload. Files live on the service box (no database):
+
+```text
+herbenzo/data/compose_drafts/<id>.json
+```
+
+Override that directory with `HERBENZO_COMPOSE_DRAFTS_DIR`. Incomplete specs can be saved. A draft reported `complete: true` has passed the FormulationSpec gate and uses registry ingredient ids, so it can be posted to `/modernize`.
+
+This UI is Stage B only — not embedded in C/E. It does not change the Modernizer engine.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/` | Independent B modernize UI (HTML) |
+| `GET` | `/` | Independent B modernize UI (compose form + raw JSON) |
 | `GET` | `/static/*` | UI assets (CSS/JS) |
 | `GET` | `/health` | Stage B health JSON (`ui: available`) |
+| `GET` | `/ingredients` | Stock registry rows the modernizer already uses |
+| `GET` | `/drafts` | List named compose drafts |
+| `POST` | `/drafts` | Create a draft, or update one when `id` is sent |
+| `GET` | `/drafts/{id}` | Load one draft (`spec` is the saved form) |
+| `DELETE` | `/drafts/{id}` | Delete a draft |
 | `POST` | `/modernize` | Body: `FormulationSpec` (herbenzo-contracts) → `ModernizedSKU` |
 
 ```bash
@@ -166,8 +186,9 @@ $ python -m herbenzo.cli adjudicate --pmid 37257749 \
 | `herbenzo/components/modernizer/` | BCS classifier, delivery recommender, orchestrator |
 | `herbenzo/pipeline.py` | End-to-end runner and report builder |
 | `herbenzo/cli.py` | Command line |
-| `herbenzo/api.py` | FastAPI: UI at `/`, `GET /health`, `POST /modernize` on `:8003` |
-| `herbenzo/static/` | Independent B UI (HTML/CSS/JS) |
+| `herbenzo/api.py` | FastAPI: UI at `/`, `GET /health`, `GET /ingredients`, `/drafts`, `POST /modernize` on `:8003` |
+| `herbenzo/static/` | Independent B UI (compose form, drafts, raw JSON) |
+| `herbenzo/data/compose_drafts/` | On-disk compose drafts (gitignored; created on save) |
 | `herbenzo/contract_gate.py` | Shared-package FormulationSpec / ModernizedSKU gates |
 | `cache/` | On-disk response cache — delete to force re-retrieval |
 
@@ -221,7 +242,8 @@ berberine efflux override. Review them before anything ships.
 ## Not included
 
 Components A, C, E; A→B dose/identity adapter (**T11**); C consuming ModernizedSKU
-(**T12**); A→B→C glue (**T13**); persistence; authentication; per-country
-regulatory content. The modernize HTTP surface and independent B UI are live on
-`:8003`; the full CLI report path (evidence + adjudication) remains available
-via `python -m herbenzo.cli`.
+(**T12**); A→B→C glue (**T13**); authentication; per-country
+regulatory content. Compose drafts are local JSON files for the Stage B form
+only — not a product database. The modernize HTTP surface and independent B UI
+are live on `:8003`; the full CLI report path (evidence + adjudication) remains
+available via `python -m herbenzo.cli`.

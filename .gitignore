@@ -14,6 +14,9 @@ __pycache__/
 *.egg-info/
 out/
 cache/
+
+# Stage B compose drafts (local demo files; created on save)
+herbenzo/data/compose_drafts/
 * 2.py
 * 2.*
 .DS_Store
