@@ -194,6 +194,9 @@ class StaticRegistriesClient:
     def lookup_marker(self, ingredient_id: str) -> MarkerRecord:
         rec = self.lookup_ingredient(ingredient_id)
         if not rec.markers:
+            # Classical dosage forms report this gap as a non-blocking
+            # indicator instead of calling lookup_marker. Other forms still
+            # fail here — an empty marker list is not guessed into a compound.
             raise UnknownMarker(f"no standardization marker assigned for {ingredient_id!r}")
         return rec.markers[0]
 

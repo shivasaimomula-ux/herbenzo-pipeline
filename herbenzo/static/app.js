@@ -30,6 +30,7 @@ const el = {
   statusText: document.getElementById("status-text"),
   resultPanel: document.getElementById("result-panel"),
   resultMeta: document.getElementById("result-meta"),
+  markerGap: document.getElementById("marker-gap"),
   skuSummary: document.getElementById("sku-summary"),
   ingredientCards: document.getElementById("ingredient-cards"),
   rawJson: document.getElementById("raw-json"),
@@ -44,10 +45,34 @@ function setStatus(kind, message) {
 
 function clearResult() {
   el.resultPanel.hidden = true;
+  el.markerGap.hidden = true;
+  el.markerGap.innerHTML = "";
   el.skuSummary.innerHTML = "";
   el.ingredientCards.innerHTML = "";
   el.rawJson.textContent = "";
   el.resultMeta.textContent = "";
+}
+
+function renderMarkerGap(gap) {
+  if (!gap) {
+    el.markerGap.hidden = true;
+    el.markerGap.innerHTML = "";
+    return;
+  }
+  const forms = (gap.matched_forms || []).join(", ");
+  const lines = (gap.ingredients || [])
+    .map(
+      (item) =>
+        `<li>${escapeHtml(item.ingredient_id)} — ${escapeHtml(item.reason || "")}</li>`
+    )
+    .join("");
+  el.markerGap.hidden = false;
+  el.markerGap.innerHTML = `
+    <strong>Advisory · classical preparation has no established active marker</strong>
+    <p>${escapeHtml(gap.message || "")}</p>
+    <p>Matched form: ${escapeHtml(forms || "—")}. This does not block modernization.</p>
+    ${lines ? `<ul>${lines}</ul>` : ""}
+  `;
 }
 
 function formatErrorDetail(detail) {
@@ -267,7 +292,30 @@ async function modernize() {
       return;
     }
 
-    setStatus("ok", `Modernized · ${body.sku_id || "SKU"} · confidence ${pct(body.confidence)}`);
+    const gap = body.classical_active_marker_gap || null;
+    renderMarkerGap(gap);
+    if (!body.sku_id) {
+      const name = (gap && gap.product_name) || "This preparation";
+      setStatus(
+        "ok",
+        `${name} finished with an advisory indicator. Modernization was not blocked, and no marker was invented.`
+      );
+      el.resultPanel.hidden = false;
+      el.resultMeta.textContent = "No marker-backed ModernizedSKU";
+      el.skuSummary.innerHTML = `
+        <div><dt>Product</dt><dd>${escapeHtml((gap && gap.product_name) || "—")}</dd></div>
+        <div><dt>Dosage form</dt><dd>${escapeHtml((gap && gap.dosage_form) || "—")}</dd></div>
+        <div><dt>ModernizedSKU</dt><dd>No marker-backed ingredients</dd></div>
+      `;
+      el.ingredientCards.innerHTML = "";
+      el.rawJson.textContent = JSON.stringify(body, null, 2);
+      return;
+    }
+    const advisory = gap ? " · advisory indicator" : "";
+    setStatus(
+      "ok",
+      `Modernized · ${body.sku_id || "SKU"} · confidence ${pct(body.confidence)}${advisory}`
+    );
     renderSku(body);
   } catch (err) {
     setStatus(

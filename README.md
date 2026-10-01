@@ -56,7 +56,10 @@ curl -s -X POST http://127.0.0.1:8003/modernize \
 
 Unknown fields / raised confidence floors → **422** with `herbenzo-contracts`
 `validation_error_body`. Unknown registry ingredient IDs → **422**
-(`unknown_ingredient`).
+(`unknown_ingredient`). A classical preparation with no registry marker does
+**not** 422: `POST /modernize` returns 200 and, when any ingredient still has
+a marker, the ModernizedSKU plus `classical_active_marker_gap`. When none do,
+the body is `{ "sku": null, "classical_active_marker_gap": { ... } }`.
 ---
 
 ## CLI quick start
@@ -114,6 +117,16 @@ implemented and tested, not asserted.
    statement in a downstream document resolves back to its source and verdict.
 8. **No uncited numbers.** `BioavailabilityEvidence` rejects a `fold_change`
    without PMID, evidence tier and model system.
+9. **Classical preparations without an active marker are advisory.** If the
+   dosage form or product name is a classical Ayurvedic preparation (decoction,
+   lehya, bhasma, churna, and the other form names in
+   `herbenzo/services/classical_marker_gap.py`) **and** an ingredient's registry
+   row has no standardization marker, the pipeline report includes
+   `classical_active_marker_gap` beside `sku`. The indicator does not raise,
+   does not return 422, and does not lower the confidence floor. Marker-backed
+   ingredients are still modernized and adjudicated. No marker chemistry is
+   invented to fill the gap. `herbenzo-contracts` does not yet declare this
+   field; it stays outside the validated ModernizedSKU.
 
 ---
 

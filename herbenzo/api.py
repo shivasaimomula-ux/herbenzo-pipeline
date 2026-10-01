@@ -77,7 +77,13 @@ def health():
 
 @app.post("/modernize")
 async def modernize(request: Request):
-    """Validate FormulationSpec → ModernizerEngine.modernize → ModernizedSKU."""
+    """Validate FormulationSpec → ModernizerEngine.modernize → ModernizedSKU.
+
+    A classical preparation whose registry row has no active marker does not
+    422. When some ingredients still have markers, the body is that
+    ModernizedSKU plus ``classical_active_marker_gap``. When none do, the body
+    is ``{"sku": null, "classical_active_marker_gap": ...}``.
+    """
     try:
         payload = await request.json()
     except Exception as exc:
@@ -100,6 +106,19 @@ async def modernize(request: Request):
     try:
         # Engine uses local schemas; strip shared-only fields at the boundary.
         sku = _ENGINE.modernize(to_engine_payload(spec))
+        # Read after modernize. Not a contract field — herbenzo-contracts does
+        # not declare it. Attached below only once outbound validation has
+        # passed, and only when the indicator actually fired.
+        marker_gap = _ENGINE.classical_active_marker_gap
+        if sku is None:
+            # No marker-backed ingredient. Do not 422 and do not invent a SKU.
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "sku": None,
+                    "classical_active_marker_gap": marker_gap,
+                },
+            )
         outbound = validate_outbound_modernized_sku(sku)
         outbound = attach_provenance_thread(spec, outbound)
     except (UnknownIngredient, UnknownMarker) as exc:
@@ -110,7 +129,10 @@ async def modernize(request: Request):
     except (ValidationError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=http_error_detail(exc)) from exc
 
-    return JSONResponse(content=outbound.model_dump(mode="json"))
+    body = outbound.model_dump(mode="json")
+    if marker_gap is not None:
+        body["classical_active_marker_gap"] = marker_gap
+    return JSONResponse(content=body)
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

@@ -225,6 +225,30 @@ button:active,
   font-size: 0.82rem;
 }
 
+.marker-gap {
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(15, 107, 92, 0.35);
+  border-radius: 12px;
+  background: #e7f3ef;
+}
+
+.marker-gap strong {
+  display: block;
+  font-size: 0.92rem;
+}
+
+.marker-gap p,
+.marker-gap ul {
+  margin: 0.35rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+}
+
+.marker-gap ul {
+  padding-left: 1.1rem;
+}
+
 .sku-summary {
   display: grid;
   gap: 0.55rem 1.25rem;
