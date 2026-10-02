@@ -43,7 +43,7 @@ body {
 }
 
 .shell {
-  width: min(920px, calc(100% - 2rem));
+  width: min(980px, calc(100% - 2rem));
   margin: 0 auto;
   padding: 2.5rem 0 4rem;
 }
@@ -329,13 +329,245 @@ button:active,
   }
 }
 
+.mode-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.tab {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--ink-soft);
+}
+
+.tab[aria-selected="true"] {
+  background: var(--accent);
+  color: #f7fbf9;
+  border-color: var(--accent);
+}
+
+.tab[aria-selected="true"]:hover {
+  background: var(--accent-deep);
+  color: #f7fbf9;
+}
+
+.draft-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.draft-name {
+  flex: 1 1 16rem;
+  margin: 0;
+}
+
+.draft-list {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.75rem 0 1rem;
+}
+
+.draft-empty {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+}
+
+.draft-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem 0.75rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.draft-row.is-current {
+  border-color: rgba(15, 107, 92, 0.45);
+  background: rgba(229, 242, 236, 0.7);
+}
+
+.draft-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.45rem 0.7rem;
+  min-width: 0;
+}
+
+.draft-copy strong {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.draft-copy span,
+.pill {
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+}
+
+.pill {
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pill.ready {
+  color: var(--ok-ink);
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem 1rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  margin-top: 0.15rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.field input,
+.field select {
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 0.92rem;
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 400;
+}
+
+.field input:focus,
+.field select:focus {
+  outline: 2px solid rgba(15, 107, 92, 0.35);
+  outline-offset: 1px;
+}
+
+.subhead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin: 1.15rem 0 0.35rem;
+}
+
+.subhead h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+}
+
+.ing-editors {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.ing-editor {
+  padding: 0.8rem 0.85rem 0.9rem;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.ing-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.55rem;
+}
+
+.ing-head h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1rem;
+}
+
+.identity {
+  margin: 0.55rem 0 0.7rem;
+  color: var(--ink);
+  font-size: 0.88rem;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.identity span {
+  font-weight: 500;
+}
+
+.marker-hint:empty {
+  display: none;
+}
+
+.raw-actions {
+  margin-bottom: 0.75rem;
+}
+
+.preview {
+  margin-top: 1rem;
+}
+
+.advisory-banner {
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(15, 107, 92, 0.35);
+  background: #e7f3ef;
+  color: var(--ink);
+}
+
+.advisory-banner strong {
+  display: block;
+  font-size: 0.92rem;
+}
+
+.advisory-banner p,
+.advisory-banner ul {
+  margin: 0.35rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+}
+
+.advisory-banner ul {
+  padding-left: 1.1rem;
+}
+
+.advisory-banner p {
+  white-space: pre-wrap;
+}
+
+.advisory-item + .advisory-item {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(15, 107, 92, 0.2);
+}
+
 @media (max-width: 640px) {
   .shell {
-    width: min(100% - 1.25rem, 920px);
+    width: min(100% - 1.25rem, 980px);
     padding-top: 1.5rem;
   }
 
   textarea {
     min-height: 13rem;
+  }
+
+  .field-grid {
+    grid-template-columns: 1fr;
   }
 }

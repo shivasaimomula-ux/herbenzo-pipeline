@@ -15,24 +15,118 @@
     <header class="brand">
       <p class="brand-mark">Herbenzo</p>
       <h1>Stage B · Modernizer</h1>
-      <p class="lede">Paste or upload a FormulationSpec, modernize on :8003, inspect the ModernizedSKU.</p>
+      <p class="lede">Compose a FormulationSpec, or paste JSON, then modernize on :8003 and inspect the ModernizedSKU.</p>
     </header>
 
     <section class="input-panel" aria-labelledby="input-heading">
       <div class="panel-head">
         <h2 id="input-heading">FormulationSpec</h2>
-        <div class="actions">
+        <div class="mode-tabs" role="tablist" aria-label="How to provide a FormulationSpec">
+          <button type="button" class="tab" id="tab-compose" role="tab" aria-selected="true" aria-controls="compose-panel">Compose</button>
+          <button type="button" class="tab" id="tab-raw" role="tab" aria-selected="false" aria-controls="raw-panel">Advanced / Raw JSON</button>
+        </div>
+      </div>
+
+      <div id="compose-panel" role="tabpanel" aria-labelledby="tab-compose">
+        <div class="draft-bar">
+          <label class="field draft-name">
+            Draft name
+            <input id="draft-name" type="text" maxlength="120" autocomplete="off" placeholder="Name this draft" />
+          </label>
+          <div class="actions">
+            <button type="button" class="ghost" id="save-draft">Save draft</button>
+            <button type="button" class="ghost" id="new-draft">New</button>
+          </div>
+        </div>
+        <p class="hint">Drafts are stored on this server in <code>herbenzo/data/compose_drafts/</code> (<code>HERBENZO_COMPOSE_DRAFTS_DIR</code> overrides that) and survive a reload. Incomplete specs can be saved.</p>
+        <div id="draft-list" class="draft-list" aria-live="polite"></div>
+
+        <div class="field-grid">
+          <label class="field">
+            Formulation ID
+            <input id="formulation-id" type="text" autocomplete="off" placeholder="F-ASHW-001" />
+          </label>
+          <label class="field">
+            Product name
+            <input id="product-name" type="text" autocomplete="off" placeholder="Ashwagandha Root Extract" />
+          </label>
+          <label class="field">
+            Finished form
+            <input id="dosage-form" type="text" list="dosage-presets" autocomplete="off" placeholder="gummy, capsule, lehya…" />
+            <datalist id="dosage-presets">
+              <option value="gummy"></option>
+              <option value="capsule"></option>
+              <option value="tablet"></option>
+              <option value="powder"></option>
+              <option value="syrup"></option>
+              <option value="drink"></option>
+              <option value="softgel"></option>
+              <option value="oil"></option>
+              <option value="tea"></option>
+              <option value="lehya"></option>
+              <option value="churna"></option>
+              <option value="kwath"></option>
+              <option value="avaleha"></option>
+              <option value="gutika"></option>
+            </datalist>
+          </label>
+          <label class="field">
+            Target market
+            <select id="target-market">
+              <option value="US">US</option>
+              <option value="EU">EU</option>
+              <option value="NZ">NZ</option>
+              <option value="AU">AU</option>
+              <option value="IN">IN</option>
+              <option value="UK">UK</option>
+              <option value="CA">CA</option>
+            </select>
+          </label>
+          <label class="field">
+            Servings per day
+            <input id="servings" type="number" min="1" step="1" inputmode="numeric" value="1" />
+          </label>
+          <label class="field">
+            Confidence
+            <input id="confidence" type="number" min="0" max="1" step="0.01" inputmode="decimal" value="0.85" />
+          </label>
+        </div>
+
+        <div class="subhead">
+          <h3>Ingredients</h3>
+          <div class="actions">
+            <button type="button" class="ghost" id="load-sample-compose">Load sample</button>
+            <button type="button" class="ghost" id="add-ingredient">Add ingredient</button>
+          </div>
+        </div>
+        <p class="hint">Amount is milligrams per serving. Botanical name, common name, and part come from the registry row.</p>
+        <div id="ingredient-editors" class="ing-editors"></div>
+
+        <details class="raw preview" open>
+          <summary>FormulationSpec preview</summary>
+          <pre id="spec-preview"></pre>
+        </details>
+
+        <div class="run-row">
+          <button type="button" class="primary" id="compose-run">Run Modernize</button>
+          <button type="button" class="ghost" id="edit-json">Edit as JSON</button>
+          <p class="hint">POST <code>/modernize</code> · same origin</p>
+        </div>
+      </div>
+
+      <div id="raw-panel" role="tabpanel" aria-labelledby="tab-raw" hidden>
+        <div class="actions raw-actions">
           <button type="button" class="ghost" id="load-sample">Load sample</button>
           <label class="ghost file-btn">
             Upload JSON
             <input type="file" id="file-input" accept=".json,application/json" hidden />
           </label>
         </div>
-      </div>
-      <textarea id="spec-input" spellcheck="false" rows="16" aria-label="FormulationSpec JSON"></textarea>
-      <div class="run-row">
-        <button type="button" class="primary" id="run-btn">Modernize</button>
-        <p class="hint">POST <code>/modernize</code> · same origin</p>
+        <textarea id="spec-input" spellcheck="false" rows="16" aria-label="FormulationSpec JSON"></textarea>
+        <div class="run-row">
+          <button type="button" class="primary" id="run-btn">Modernize</button>
+          <p class="hint">POST <code>/modernize</code> · same origin</p>
+        </div>
       </div>
     </section>
 
@@ -45,6 +139,7 @@
         <h2 id="result-heading">ModernizedSKU</h2>
         <p class="meta" id="result-meta"></p>
       </div>
+      <div id="advisory-banner" class="advisory-banner" hidden></div>
       <div id="sku-summary" class="sku-summary"></div>
       <div id="ingredient-cards" class="ingredient-list"></div>
       <details class="raw">
