@@ -156,3 +156,5 @@ def _urllib_post(url: str, body: bytes, headers: dict[str, str], timeout_s: floa
     except urllib.error.HTTPError as exc:
         raw = exc.read() if exc.fp is not None else b""
         return int(exc.code), raw
+    except urllib.error.URLError as exc:
+        raise LlmError(f"LLM request failed: {exc.reason}") from exc

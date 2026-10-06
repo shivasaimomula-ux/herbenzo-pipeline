@@ -24,7 +24,7 @@ from herbenzo.schemas.contracts import (
     DeliveryRecommendation,
     DeliveryTechnology as DT,
 )
-from herbenzo.services.registries import MarkerRecord
+from herbenzo.services.records import MarkerRecord
 
 __all__ = ["recommend", "EXCIPIENTS"]
 

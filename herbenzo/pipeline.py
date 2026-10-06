@@ -23,7 +23,7 @@ from herbenzo.components.modernizer.modernizer import ENGINE_VERSION, Modernizer
 from herbenzo.schemas.contracts import FormulationSpec, ModernizedSKU
 from herbenzo.services.adjudication import AdjudicationService, Verdict
 from herbenzo.services.evidence import EvidenceStore
-from herbenzo.services.live_registries import LiveRegistriesClient
+from herbenzo.services.records import SnapshotLookup, provenance_from_approvals
 
 __all__ = ["Pipeline", "PIPELINE_VERSION"]
 
@@ -37,20 +37,24 @@ _PARTIAL_PENALTY = 0.05
 class Pipeline:
     def __init__(
         self,
-        registries: LiveRegistriesClient | None = None,
+        lookup: SnapshotLookup | None = None,
         evidence: EvidenceStore | None = None,
         adjudicator: AdjudicationService | None = None,
         allow_network: bool = True,
+        registries: SnapshotLookup | None = None,
+        approvals: list | None = None,
     ) -> None:
-        self.registries = registries or LiveRegistriesClient(allow_network=allow_network)
+        self.lookup = lookup or registries or SnapshotLookup()
+        self.registries = self.lookup
+        self.approvals = list(approvals or [])
         self.evidence = evidence or EvidenceStore()
         self.adjudicator = adjudicator or AdjudicationService(self.evidence)
-        self.engine = ModernizerEngine(self.registries)
+        self.engine = ModernizerEngine(self.lookup)
         self.allow_network = allow_network
 
     # -- main entry point ---------------------------------------------------
 
-    def run(self, spec: FormulationSpec | dict, max_refs_per_claim: int = 4) -> dict:
+    def run(self, spec: FormulationSpec | dict, max_refs_per_claim: int = 4, approvals: list | None = None) -> dict:
         local_spec = spec if isinstance(spec, FormulationSpec) else FormulationSpec.model_validate(spec)
         sku = self.engine.modernize(local_spec)
         # Advisory only. Never an input to confidence penalties below.
@@ -65,7 +69,7 @@ class Pipeline:
             # Evidence and adjudication have nothing marker-backed to attach
             # to; the run still finishes and reports the indicator.
             confidence = round(float(local_spec.confidence), 4)
-            return self._report(
+            report = self._report(
                 started=started,
                 sku_payload=None,
                 marker_gap=marker_gap,
@@ -75,6 +79,8 @@ class Pipeline:
                 claims=claims,
                 gaps=gaps,
             )
+            report["research_provenance"] = provenance_from_approvals(approvals if approvals is not None else self.approvals)
+            return report
 
         # Shared-package outbound gate (Audit Finding #1 / Task T6).
         # The indicator is not part of this payload.
@@ -138,7 +144,7 @@ class Pipeline:
                 })
 
         confidence = self._apply_penalties(sku, claims)
-        return self._report(
+        report = self._report(
             started=started,
             sku_payload=json.loads(sku.model_dump_json()),
             marker_gap=marker_gap,
@@ -148,6 +154,8 @@ class Pipeline:
             claims=claims,
             gaps=gaps,
         )
+        report["research_provenance"] = provenance_from_approvals(approvals if approvals is not None else self.approvals)
+        return report
 
     def _report(
         self,

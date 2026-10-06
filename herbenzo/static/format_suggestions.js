@@ -118,6 +118,12 @@
     }
     const serial = ++requestSerial;
     const payload = { ingredient_ids: ids };
+    if (window.herbenzoApproved && typeof window.herbenzoApproved.values === "function") {
+      payload.approvals = [...window.herbenzoApproved.values()].filter((doc) => {
+        const id = doc && (doc.ingredient_id || (doc.ingredient && doc.ingredient.ingredient_id));
+        return ids.includes(id);
+      });
+    }
     if (audience && audience.value) payload.audience = audience.value;
     if (dosageForm && dosageForm.value.trim()) payload.dosage_form = dosageForm.value.trim();
     if (productName && productName.value.trim()) payload.product_name = productName.value.trim();

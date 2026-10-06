@@ -29,7 +29,6 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 from herbenzo.components.modernizer.modernizer import ENGINE_VERSION, ModernizerEngine
-from herbenzo.enrich_api import router as enrich_router
 from herbenzo.contract_gate import (
     attach_provenance_thread,
     http_error_detail,
@@ -38,12 +37,16 @@ from herbenzo.contract_gate import (
     validate_outbound_modernized_sku,
 )
 from herbenzo.format_suggestions import suggest_from_payload
-from herbenzo.services.registries import (
-    UnknownIngredient,
+from herbenzo.research_api import router as research_router
+from herbenzo.services.llm_config import validate_llm_settings
+from herbenzo.services.records import (
+    ResearchError,
     UnknownMarker,
-    iter_registry_records,
-    merged_ingredient_ids,
+    apply_marker_overrides,
+    provenance_from_approvals,
+    snapshot_from_approvals,
 )
+from herbenzo.services.research import stored_pubmed_count
 from herbenzo_contracts import CONTRACT_SCHEMA_VERSION
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -61,7 +64,13 @@ app = FastAPI(
     ),
 )
 
-_ENGINE = ModernizerEngine()
+def _llm_config_payload() -> dict[str, Any]:
+    settings = get_settings()
+    return validate_llm_settings(
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        model=settings.llm_model,
+    )
 
 
 def _health_payload() -> dict[str, Any]:
@@ -74,26 +83,21 @@ def _health_payload() -> dict[str, Any]:
         "contract_schema_version": CONTRACT_SCHEMA_VERSION,
         "port_contract": 8003,
         "llm": False,
+        "llm_config": _llm_config_payload(),
         "ui": "available",
         "endpoints": {
             "ui": "/",
             "health": "/health",
             "modernize": "POST /modernize",
-            "ingredients": "GET /ingredients",
+            "research": "POST /research",
+            "research_suggest": "GET/POST /research/suggest",
+            "research_approve": "POST /research/approve",
+            "research_marker": "POST /research/marker",
             "suggest_formats": "POST /suggest-formats",
             "drafts": "GET/POST /drafts",
             "draft": "GET/DELETE /drafts/{id}",
             "static": "/static/",
-            "enrich_propose": "POST /enrich/propose",
-            "enrich_candidates": "GET /enrich/candidates",
-            "enrich_candidate": "GET /enrich/candidates/{id}",
-            "enrich_approve": "POST /enrich/candidates/{id}/approve",
-            "enrich_reject": "POST /enrich/candidates/{id}/reject",
-            "ayush_accept": "POST /enrich/ayush/{arp_id}/accept",
-            "ayush_search": "GET /research/ayush/search?q=",
-            "ayush_record": "GET /research/ayush/records/{arp_id}",
         },
-        "enrichment_llm": get_settings().llm_available,
     }
 
 
@@ -118,18 +122,35 @@ def _draft_path(draft_id: str) -> Path:
     return path
 
 
-def _spec_is_complete(spec: dict[str, Any]) -> bool:
-    """True when the stored object can be posted to /modernize.
+def _approval_matches(spec_ids: set[str], approvals: list[Any]) -> bool:
+    """True when every ingredient id has a species-rank approval with enough refs."""
+    settings = get_settings()
+    matched: set[str] = set()
+    for doc in approvals:
+        if not isinstance(doc, dict) or doc.get("status") != "approved":
+            continue
+        ingredient = doc.get("ingredient") if isinstance(doc.get("ingredient"), dict) else {}
+        ingredient_id = str(ingredient.get("ingredient_id") or doc.get("ingredient_id") or "")
+        taxonomy = doc.get("taxonomy") if isinstance(doc.get("taxonomy"), dict) else {}
+        literature = doc.get("literature") if isinstance(doc.get("literature"), dict) else {}
+        if str(taxonomy.get("rank") or "").casefold() != "species":
+            continue
+        if literature.get("status") != "ok":
+            continue
+        if stored_pubmed_count(literature) < settings.min_pubmed_refs:
+            continue
+        if ingredient_id:
+            matched.add(ingredient_id)
+    return spec_ids <= matched and bool(spec_ids)
 
-    Schema-valid and every ingredient id is in the stock registry. Unknown ids
-    still 422 from /modernize; those drafts stay incomplete.
-    """
+
+def _spec_is_complete(spec: dict[str, Any], approvals: list[Any] | None = None) -> bool:
+    """True when the draft can be posted to /modernize with its saved approvals."""
     try:
         parsed = validate_inbound_formulation_spec(spec)
     except (ValidationError, ValueError, TypeError):
         return False
-    known = merged_ingredient_ids()
-    return all(ing.ingredient_id in known for ing in parsed.ingredients)
+    return _approval_matches({ing.ingredient_id for ing in parsed.ingredients}, list(approvals or []))
 
 
 def _ingredient_count(spec: Any) -> int:
@@ -150,14 +171,16 @@ def _read_draft_file(path: Path) -> dict[str, Any] | None:
 
 def _public_draft(doc: dict[str, Any]) -> dict[str, Any]:
     spec = doc.get("spec") if isinstance(doc.get("spec"), dict) else {}
+    approvals = doc.get("approvals") if isinstance(doc.get("approvals"), list) else []
     return {
         "id": doc.get("id"),
         "name": doc.get("name"),
         "saved_at": doc.get("saved_at"),
         "updated_at": doc.get("updated_at"),
-        "complete": _spec_is_complete(spec),
+        "complete": _spec_is_complete(spec, approvals),
         "ingredient_count": _ingredient_count(spec),
         "spec": spec,
+        "approvals": approvals,
     }
 
 
@@ -205,22 +228,12 @@ def _parse_draft_body(payload: Any) -> tuple[str, dict[str, Any], str | None]:
         if not isinstance(draft_id, str):
             raise HTTPException(status_code=422, detail="Draft id is invalid")
         _check_draft_id(draft_id)
-    return name, spec, draft_id
-
-
-def _ingredient_row(rec: Any) -> dict[str, Any]:
-    return {
-        "ingredient_id": rec.ingredient_id,
-        "botanical_name": rec.botanical_name,
-        "common_name": rec.common_name,
-        "sanskrit_name": rec.sanskrit_name,
-        "synonyms": list(rec.synonyms),
-        "part_used": rec.part_used,
-        "markers": [
-            {"marker_name": marker.marker_name, "rationale": marker.rationale}
-            for marker in rec.markers
-        ],
-    }
+    approvals = payload.get("approvals", [])
+    if approvals is None:
+        approvals = []
+    if not isinstance(approvals, list):
+        raise HTTPException(status_code=422, detail="Draft approvals must be a list")
+    return name, spec, draft_id, approvals
 
 
 @app.get("/")
@@ -235,12 +248,6 @@ def root():
 @app.get("/health")
 def health():
     return _health_payload()
-
-
-@app.get("/ingredients")
-def ingredients():
-    """Stock rows plus approved overlay rows. Pending enrichment candidates are omitted."""
-    return {"ingredients": [_ingredient_row(rec) for rec in iter_registry_records()]}
 
 
 @app.get("/drafts")
@@ -281,9 +288,9 @@ async def save_draft(request: Request):
     except Exception as exc:
         raise HTTPException(status_code=422, detail="Draft body must be JSON") from exc
 
-    name, spec, draft_id = _parse_draft_body(payload)
+    name, spec, draft_id, approvals = _parse_draft_body(payload)
     now = datetime.now(UTC).isoformat()
-    complete = _spec_is_complete(spec)
+    complete = _spec_is_complete(spec, approvals)
 
     with _DRAFT_LOCK:
         if draft_id is None:
@@ -295,6 +302,7 @@ async def save_draft(request: Request):
                 "updated_at": now,
                 "complete": complete,
                 "spec": spec,
+                "approvals": approvals,
             }
             _write_draft(doc)
             status = 201
@@ -309,6 +317,7 @@ async def save_draft(request: Request):
                 "updated_at": now,
                 "complete": complete,
                 "spec": spec,
+                "approvals": approvals,
             }
             _write_draft(doc)
             status = 200
@@ -349,23 +358,48 @@ async def suggest_formats(request: Request):
 
     try:
         return suggest_from_payload(payload)
-    except (UnknownIngredient, UnknownMarker) as exc:
+    except ResearchError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_research_detail(exc)) from exc
+    except UnknownMarker as exc:
         raise HTTPException(
             status_code=422,
-            detail=http_error_detail(exc, code="unknown_ingredient"),
+            detail=_research_detail(ResearchError(str(exc), code="marker_unverified")),
         ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=http_error_detail(exc)) from exc
 
 
+def _research_detail(exc: ResearchError) -> dict[str, Any]:
+    detail = dict(http_error_detail(exc, code=exc.code))
+    detail["error"] = exc.code
+    return detail
+
+
+def _split_modernize_body(payload: dict[str, Any]) -> tuple[dict[str, Any], list[Any], list[Any] | None]:
+    if "spec" in payload:
+        extra = set(payload) - {"spec", "approvals", "marker_overrides"}
+        if extra:
+            raise ValueError("unexpected modernize fields: " + ", ".join(sorted(extra)))
+        spec = payload.get("spec")
+        if not isinstance(spec, dict):
+            raise ValueError("spec must be an object")
+        approvals = payload.get("approvals") or []
+        if not isinstance(approvals, list):
+            raise ValueError("approvals must be a list")
+        overrides = payload.get("marker_overrides")
+        if overrides is not None and not isinstance(overrides, list):
+            raise ValueError("marker_overrides must be a list")
+        return spec, approvals, overrides
+    return payload, [], None
+
+
 @app.post("/modernize")
 async def modernize(request: Request):
-    """Validate FormulationSpec → ModernizerEngine.modernize → ModernizedSKU.
+    """Modernize an approved research snapshot.
 
-    A classical preparation whose registry row has no active marker does not
-    422. When some ingredients still have markers, the body is that
-    ModernizedSKU plus ``classical_active_marker_gap``. When none do, the body
-    is ``{"sku": null, "classical_active_marker_gap": ...}``.
+    Body is either a bare FormulationSpec (rejected as not_approved) or
+    ``{"spec", "approvals", "marker_overrides"}``. Computation does not call
+    PubChem or an LLM. Provenance is attached beside the SKU.
     """
     try:
         payload = await request.json()
@@ -382,53 +416,51 @@ async def modernize(request: Request):
         )
 
     try:
-        spec = validate_inbound_formulation_spec(payload)
+        spec_payload, approvals, overrides = _split_modernize_body(payload)
+        spec = validate_inbound_formulation_spec(spec_payload)
+        approvals = apply_marker_overrides(approvals, overrides)
+    except ResearchError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_research_detail(exc)) from exc
     except (ValidationError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=http_error_detail(exc)) from exc
 
-    # Ask the engine's registry so a caller-supplied client (and approved
-    # overlay rows) are visible. Collect every miss before raising.
-    unknown: list[str] = []
+    lookup = snapshot_from_approvals([doc for doc in approvals if isinstance(doc, dict)])
+    missing = []
     for ing in spec.ingredients:
-        try:
-            _ENGINE.registries.lookup_ingredient(ing.ingredient_id)
-        except UnknownIngredient:
-            unknown.append(ing.ingredient_id)
-    if unknown:
-        listed = ", ".join(repr(item) for item in unknown)
-        exc = UnknownIngredient(
-            f"{listed} is not in the ingredient registry; "
-            "resolve botanical identity before modernization"
+        if ing.ingredient_id not in lookup._records:
+            missing.append(ing.ingredient_id)
+    if missing:
+        listed = ", ".join(missing)
+        exc = ResearchError(
+            f"{listed} is not approved for this request; research it and approve it before modernization",
+            code="not_approved",
         )
-        detail = dict(http_error_detail(exc, code="unknown_ingredient"))
-        detail["error"] = "unknown_ingredient"
-        detail["unknown_ids"] = unknown
-        if not all(item in str(detail.get("message") or "") for item in unknown):
-            detail["message"] = str(exc)
+        detail = _research_detail(exc)
+        detail["ingredient_ids"] = missing
         raise HTTPException(status_code=422, detail=detail)
 
+    engine = ModernizerEngine(lookup)
+    provenance = provenance_from_approvals([doc for doc in approvals if isinstance(doc, dict)])
     try:
-        # Engine uses local schemas; strip shared-only fields at the boundary.
-        sku = _ENGINE.modernize(to_engine_payload(spec))
-        # Read after modernize. Not a contract field — herbenzo-contracts does
-        # not declare it. Attached below only once outbound validation has
-        # passed, and only when the indicator actually fired.
-        marker_gap = _ENGINE.classical_active_marker_gap
+        sku = engine.modernize(to_engine_payload(spec))
+        marker_gap = engine.classical_active_marker_gap
         if sku is None:
-            # No marker-backed ingredient. Do not 422 and do not invent a SKU.
             return JSONResponse(
                 status_code=200,
                 content={
                     "sku": None,
                     "classical_active_marker_gap": marker_gap,
+                    "research_provenance": provenance,
                 },
             )
         outbound = validate_outbound_modernized_sku(sku)
         outbound = attach_provenance_thread(spec, outbound)
-    except (UnknownIngredient, UnknownMarker) as exc:
+    except ResearchError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_research_detail(exc)) from exc
+    except UnknownMarker as exc:
         raise HTTPException(
             status_code=422,
-            detail=http_error_detail(exc, code="unknown_ingredient"),
+            detail=_research_detail(ResearchError(str(exc), code="marker_unverified")),
         ) from exc
     except (ValidationError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=http_error_detail(exc)) from exc
@@ -436,8 +468,9 @@ async def modernize(request: Request):
     body = outbound.model_dump(mode="json")
     if marker_gap is not None:
         body["classical_active_marker_gap"] = marker_gap
+    body["research_provenance"] = provenance
     return JSONResponse(content=body)
 
 
-app.include_router(enrich_router)
+app.include_router(research_router)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

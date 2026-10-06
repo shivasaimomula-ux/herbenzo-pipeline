@@ -1,0 +1,218 @@
+[
+  {
+    "ingredient_id": "HB-ASHW",
+    "botanical_name": "Withania somnifera",
+    "common_name": "Ashwagandha",
+    "sanskrit_name": "Ashwagandha",
+    "synonyms": [
+      "Indian ginseng",
+      "winter cherry"
+    ],
+    "part_used": "root",
+    "markers": [
+      {
+        "marker_name": "Withaferin A",
+        "rationale": "Principal withanolide; the class routinely used for standardization. A single withanolide is a proxy for the whole withanolide fraction.",
+        "efflux_substrate": false,
+        "efflux_transporter": null,
+        "acid_labile": false,
+        "override_requires_citation": false,
+        "evidence_note": null
+      }
+    ]
+  },
+  {
+    "ingredient_id": "HB-TURM",
+    "botanical_name": "Curcuma longa",
+    "common_name": "Turmeric",
+    "sanskrit_name": "Haridra",
+    "synonyms": [
+      "curcuma",
+      "haldi"
+    ],
+    "part_used": "rhizome",
+    "markers": [
+      {
+        "marker_name": "Curcumin",
+        "rationale": "Principal curcuminoid; standard marker for curcuminoid-standardized extracts.",
+        "efflux_substrate": false,
+        "efflux_transporter": null,
+        "acid_labile": false,
+        "override_requires_citation": false,
+        "evidence_note": null
+      }
+    ]
+  },
+  {
+    "ingredient_id": "HB-BERB",
+    "botanical_name": "Berberis aristata",
+    "common_name": "Indian barberry",
+    "sanskrit_name": "Daruharidra",
+    "synonyms": [
+      "tree turmeric",
+      "berberine source"
+    ],
+    "part_used": "root bark",
+    "markers": [
+      {
+        "marker_name": "Berberine",
+        "rationale": "Isoquinoline alkaloid; the standardization marker for berberine extracts.",
+        "efflux_substrate": true,
+        "efflux_transporter": "P-glycoprotein (ABCB1)",
+        "acid_labile": false,
+        "override_requires_citation": true,
+        "evidence_note": "Berberine's low oral bioavailability is attributed substantially to intestinal P-gp efflux rather than poor passive diffusion. Computed descriptors predict high passive permeability and therefore misclassify it; this curated override corrects the permeability call. REQUIRES a retrieved citation before release."
+      }
+    ]
+  },
+  {
+    "ingredient_id": "HB-BOSW",
+    "botanical_name": "Boswellia serrata",
+    "common_name": "Indian frankincense",
+    "sanskrit_name": "Shallaki",
+    "synonyms": [
+      "salai guggul"
+    ],
+    "part_used": "gum resin",
+    "markers": [
+      {
+        "marker_name": "3-O-acetyl-11-keto-beta-boswellic acid",
+        "rationale": "AKBA; the boswellic acid used for standardization of Boswellia extracts.",
+        "efflux_substrate": false,
+        "efflux_transporter": null,
+        "acid_labile": false,
+        "override_requires_citation": false,
+        "evidence_note": null
+      }
+    ]
+  },
+  {
+    "ingredient_id": "HB-PIPL",
+    "botanical_name": "Piper longum",
+    "common_name": "Long pepper",
+    "sanskrit_name": "Pippali",
+    "synonyms": [
+      "pipli",
+      "Indian long pepper"
+    ],
+    "part_used": "fruit",
+    "markers": [
+      {
+        "marker_name": "Piperine",
+        "rationale": "Principal alkaloid and pharmacopoeial marker.",
+        "efflux_substrate": false,
+        "efflux_transporter": null,
+        "acid_labile": false,
+        "override_requires_citation": false,
+        "evidence_note": null
+      }
+    ]
+  },
+  {
+    "ingredient_id": "HB-HARI",
+    "botanical_name": "Terminalia chebula",
+    "common_name": "Chebulic myrobalan",
+    "sanskrit_name": "Haritaki",
+    "synonyms": [
+      "harad"
+    ],
+    "part_used": "pericarp of fruit",
+    "markers": [
+      {
+        "marker_name": "Chebulinic acid",
+        "rationale": "Characteristic hydrolysable tannin of T. chebula; proxy for the tannin fraction.",
+        "efflux_substrate": false,
+        "efflux_transporter": null,
+        "acid_labile": false,
+        "override_requires_citation": false,
+        "evidence_note": null
+      }
+    ]
+  },
+  {
+    "ingredient_id": "HB-BIBH",
+    "botanical_name": "Terminalia bellirica",
+    "common_name": "Belleric myrobalan",
+    "sanskrit_name": "Bibhitaki",
+    "synonyms": [
+      "baheda"
+    ],
+    "part_used": "pericarp of fruit",
+    "markers": [
+      {
+        "marker_name": "Gallic acid",
+        "rationale": "Commonly assayed phenolic marker for T. bellirica.",
+        "efflux_substrate": false,
+        "efflux_transporter": null,
+        "acid_labile": false,
+        "override_requires_citation": false,
+        "evidence_note": null
+      }
+    ]
+  },
+  {
+    "ingredient_id": "HB-AMLA",
+    "botanical_name": "Phyllanthus emblica",
+    "common_name": "Indian gooseberry",
+    "sanskrit_name": "Amalaki",
+    "synonyms": [
+      "amla",
+      "Emblica officinalis"
+    ],
+    "part_used": "fruit",
+    "markers": [
+      {
+        "marker_name": "Ellagic acid",
+        "rationale": "Ellagitannin-derived marker used for amla extracts.",
+        "efflux_substrate": false,
+        "efflux_transporter": null,
+        "acid_labile": false,
+        "override_requires_citation": false,
+        "evidence_note": null
+      }
+    ]
+  },
+  {
+    "ingredient_id": "HB-CINN",
+    "botanical_name": "Cinnamomum verum",
+    "common_name": "True cinnamon",
+    "sanskrit_name": "Twak",
+    "synonyms": [
+      "Ceylon cinnamon",
+      "Cinnamomum zeylanicum"
+    ],
+    "part_used": "stem bark",
+    "markers": [
+      {
+        "marker_name": "Cinnamaldehyde",
+        "rationale": "Principal volatile constituent of cinnamon bark.",
+        "efflux_substrate": false,
+        "efflux_transporter": null,
+        "acid_labile": false,
+        "override_requires_citation": false,
+        "evidence_note": null
+      }
+    ]
+  },
+  {
+    "ingredient_id": "HB-ELAA",
+    "botanical_name": "Elettaria cardamomum",
+    "common_name": "Green cardamom",
+    "sanskrit_name": "Ela",
+    "synonyms": [
+      "chhoti elaichi"
+    ],
+    "part_used": "seed",
+    "markers": [
+      {
+        "marker_name": "Eucalyptol",
+        "rationale": "1,8-cineole; principal volatile marker of cardamom oil.",
+        "efflux_substrate": false,
+        "efflux_transporter": null,
+        "acid_labile": false,
+        "override_requires_citation": false,
+        "evidence_note": null
+      }
+    ]
+  }
+]

@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from herbenzo.api import _DEFAULT_DRAFTS_DIR, app
-from herbenzo.services.registries import _INGREDIENTS
+from tests.legacy_snapshot import approval_for, envelope
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "ashwagandha.json"
@@ -36,27 +36,14 @@ def test_default_drafts_dir_is_under_service_data():
     assert _DEFAULT_DRAFTS_DIR.parent.parent.name == "herbenzo"
 
 
-def test_ingredients_are_the_stock_registry(client: TestClient):
-    r = client.get("/ingredients")
-    assert r.status_code == 200
-    rows = r.json()["ingredients"]
-    assert [row["ingredient_id"] for row in rows] == list(_INGREDIENTS)
-    for row, (ingredient_id, rec) in zip(rows, _INGREDIENTS.items(), strict=True):
-        assert row["ingredient_id"] == ingredient_id
-        assert row["botanical_name"] == rec.botanical_name
-        assert row["common_name"] == rec.common_name
-        assert row["sanskrit_name"] == rec.sanskrit_name
-        assert row["synonyms"] == list(rec.synonyms)
-        assert row["part_used"] == rec.part_used
-        assert [m["marker_name"] for m in row["markers"]] == [
-            m.marker_name for m in rec.markers
-        ]
-        assert all(m["rationale"] for m in row["markers"])
+def test_ingredient_registry_route_is_gone(client: TestClient):
+    assert client.get("/ingredients").status_code == 404
 
 
 def test_health_lists_compose_endpoints(client: TestClient):
     endpoints = client.get("/health").json()["endpoints"]
-    assert endpoints["ingredients"] == "GET /ingredients"
+    assert endpoints["research"] == "POST /research"
+    assert endpoints["research_suggest"] == "GET/POST /research/suggest"
     assert endpoints["drafts"] == "GET/POST /drafts"
     assert endpoints["draft"] == "GET/DELETE /drafts/{id}"
     assert endpoints["modernize"] == "POST /modernize"
@@ -84,7 +71,7 @@ def test_compose_shaped_spec_still_modernizes(client: TestClient):
             }
         ],
     }
-    r = client.post("/modernize", json=payload)
+    r = client.post("/modernize", json=envelope(payload))
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["sku_id"] == "SKU-F-COMPOSE-1"
@@ -104,7 +91,7 @@ def test_ui_offers_compose_and_raw_json(client: TestClient):
     assert 'id="spec-input"' in page.text
     js = client.get("/static/app.js")
     assert js.status_code == 200
-    assert "/ingredients" in js.text
+    assert "/research/suggest" in js.text
     assert "/drafts" in js.text
     assert "classical_active_marker_gap" in js.text
     assert "POST /modernize" in js.text or "/modernize" in js.text
@@ -126,7 +113,11 @@ def test_draft_crud_and_reload_modernizes(client: TestClient, drafts_dir: Path):
     assert partial_body["spec"]["product_name"] == "Untitled gummy"
     assert (drafts_dir / f"{partial_body['id']}.json").is_file()
 
-    created = client.post("/drafts", json={"name": "Ashwagandha capsule", "spec": _example()})
+    ashwagandha = envelope(_example())
+    created = client.post(
+        "/drafts",
+        json={"name": "Ashwagandha capsule", "spec": ashwagandha["spec"], "approvals": ashwagandha["approvals"]},
+    )
     assert created.status_code == 201, created.text
     saved = created.json()
     assert saved["complete"] is True
@@ -146,7 +137,10 @@ def test_draft_crud_and_reload_modernizes(client: TestClient, drafts_dir: Path):
     loaded = client.get(f"/drafts/{draft_id}")
     assert loaded.status_code == 200
     assert loaded.json()["spec"]["formulation_id"] == "F-ASHW-001"
-    modernized = client.post("/modernize", json=loaded.json()["spec"])
+    modernized = client.post(
+        "/modernize",
+        json={"spec": loaded.json()["spec"], "approvals": loaded.json()["approvals"]},
+    )
     assert modernized.status_code == 200, modernized.text
     assert modernized.json()["sku_id"] == "SKU-F-ASHW-001"
 
@@ -156,7 +150,12 @@ def test_draft_crud_and_reload_modernizes(client: TestClient, drafts_dir: Path):
     updated_spec["servings_per_day"] = 2
     updated = client.post(
         "/drafts",
-        json={"id": draft_id, "name": "Ashwagandha gummy", "spec": updated_spec},
+        json={
+            "id": draft_id,
+            "name": "Ashwagandha gummy",
+            "spec": updated_spec,
+            "approvals": [approval_for("HB-ASHW")],
+        },
     )
     assert updated.status_code == 200, updated.text
     assert updated.json()["id"] == draft_id
@@ -164,7 +163,10 @@ def test_draft_crud_and_reload_modernizes(client: TestClient, drafts_dir: Path):
     assert updated.json()["name"] == "Ashwagandha gummy"
     assert updated.json()["spec"]["dosage_form"] == "gummy"
     assert updated.json()["complete"] is True
-    again = client.post("/modernize", json=updated.json()["spec"])
+    again = client.post(
+        "/modernize",
+        json={"spec": updated.json()["spec"], "approvals": updated.json()["approvals"]},
+    )
     assert again.status_code == 200, again.text
     assert again.json()["dosage_form"] == "gummy"
     assert again.json()["product_name"] == "Ashwagandha gummy"
@@ -176,7 +178,7 @@ def test_draft_crud_and_reload_modernizes(client: TestClient, drafts_dir: Path):
     assert unknown_draft.json()["complete"] is False
     rejected = client.post("/modernize", json=unknown)
     assert rejected.status_code == 422
-    assert rejected.json()["detail"]["error"] == "unknown_ingredient"
+    assert rejected.json()["detail"]["error"] == "not_approved"
 
     deleted = client.delete(f"/drafts/{draft_id}")
     assert deleted.status_code == 200

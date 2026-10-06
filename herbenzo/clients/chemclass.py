@@ -38,11 +38,13 @@ class ChemicalTaxonomyClient:
         transport: Callable | None = None,
         min_interval_s: float = 0.25,
         sleep: Callable[[float], None] | None = None,
+        cache_enabled: bool = True,
     ) -> None:
         kwargs: dict[str, Any] = {
             "cache_dir": cache_dir or "cache/enrichment/chemclass",
             "transport": transport,
             "min_interval_s": min_interval_s,
+            "cache_enabled": cache_enabled,
         }
         if sleep is not None:
             kwargs["sleep"] = sleep

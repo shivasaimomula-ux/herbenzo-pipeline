@@ -1,18 +1,10 @@
 """Command-line entry point.
 
+    python -m herbenzo.cli research "Clitoria ternatea"
+    python -m herbenzo.cli research-approve candidate.json
+    python -m herbenzo.cli suggest "butterfly pea"
     python -m herbenzo.cli run examples/ashwagandha.json -o out/report.json
-    python -m herbenzo.cli run examples/triphala.json --offline
-    python -m herbenzo.cli adjudicate --pmid 37257749 \
-        --subject "Terminalia bellirica" --claim "well tolerated orally" --domain safety
-    python -m herbenzo.cli markers
-    python -m herbenzo.cli enrich propose "Bacopa monnieri"
-    python -m herbenzo.cli enrich list
-    python -m herbenzo.cli enrich approve c0123456789abcdef
-    python -m herbenzo.cli suggest-formats HB-ASHW HB-AMLA --dosage-form avaleha \\
-        --product-name Chyawanprash --audience adults
-    python -m herbenzo.cli ayush search "Withania somnifera" --system ayurveda --limit 5
-    python -m herbenzo.cli ayush record ARP_AYU030864
-    python -m herbenzo.cli ayush accept ARP_AYU030906 --note "journal checked"
+    python -m herbenzo.cli suggest-formats approvals.json --ingredient tax-43366
 """
 
 from __future__ import annotations
@@ -25,8 +17,13 @@ import sys
 from herbenzo.config import load_project_env
 from herbenzo.pipeline import Pipeline
 from herbenzo.services.adjudication import AdjudicationService
-from herbenzo.services.enrichment import EnrichmentError, build_enrichment_service
-from herbenzo.services.registries import StaticRegistriesClient, iter_registry_records
+from herbenzo.services.gemini_research import ResearchFrontDoor
+from herbenzo.services.records import ResearchError, UnknownMarker, apply_marker_overrides, snapshot_from_approvals
+from herbenzo.services.research import build_research_service
+
+
+def _load_json(path: str) -> dict:
+    return json.loads(pathlib.Path(path).read_text())
 
 
 def _cmd_run(args) -> int:
@@ -34,13 +31,34 @@ def _cmd_run(args) -> int:
     from pydantic import ValidationError
 
     try:
-        raw = json.loads(pathlib.Path(args.spec).read_text())
-        validate_inbound_formulation_spec(raw)
-    except (ValidationError, ValueError, json.JSONDecodeError) as exc:
-        print(format_cli_error(exc), file=sys.stderr)
+        raw = _load_json(args.spec)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    approvals: list = []
+    overrides = None
+    if isinstance(raw, dict) and isinstance(raw.get("spec"), dict):
+        spec_payload = raw["spec"]
+        approvals = list(raw.get("approvals") or [])
+        overrides = raw.get("marker_overrides")
+    else:
+        spec_payload = raw
+    try:
+        validate_inbound_formulation_spec(spec_payload)
+        approvals = apply_marker_overrides(approvals, overrides)
+    except (ValidationError, ValueError, ResearchError) as exc:
+        if isinstance(exc, ResearchError):
+            print(f"{exc.code}: {exc}", file=sys.stderr)
+        else:
+            print(format_cli_error(exc), file=sys.stderr)
         return 2
 
-    report = Pipeline(allow_network=not args.offline).run(raw)
+    lookup = snapshot_from_approvals([doc for doc in approvals if isinstance(doc, dict)])
+    try:
+        report = Pipeline(lookup=lookup, approvals=approvals, allow_network=not args.offline).run(spec_payload)
+    except ResearchError as exc:
+        print(f"{exc.code}: {exc}", file=sys.stderr)
+        return 2
 
     out = pathlib.Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -64,7 +82,7 @@ def _cmd_run(args) -> int:
         print(f"  declared gaps  : {len(report['declared_gaps'])} query/queries with no records")
         for g in report["declared_gaps"]:
             print(f"                   - {g}")
-    print(f"\n  BCS classification")
+    print("\n  BCS classification")
     if not sku or not sku["ingredients"]:
         print("    (no marker-backed ingredient)")
     else:
@@ -84,169 +102,65 @@ def _cmd_adjudicate(args) -> int:
     return 0 if a.verdict != "reject" else 1
 
 
-def _parse_quantity(raw: str) -> tuple[str, float]:
-    if "=" not in raw:
-        raise ValueError(f"quantity must look like HB-ASHW=500, not {raw!r}")
-    ingredient_id, amount = raw.split("=", 1)
-    ingredient_id = ingredient_id.strip()
-    if not ingredient_id:
-        raise ValueError(f"quantity must look like HB-ASHW=500, not {raw!r}")
+def _cmd_research(args) -> int:
     try:
-        quantity = float(amount)
-    except ValueError as exc:
-        raise ValueError(f"quantity must look like HB-ASHW=500, not {raw!r}") from exc
-    if quantity <= 0:
-        raise ValueError(f"quantity must be greater than 0, not {raw!r}")
-    return ingredient_id, quantity
+        doc = ResearchFrontDoor(build_research_service()).research(args.query, part_used=args.part)
+    except ResearchError as exc:
+        print(f"{exc.code}: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(doc, indent=2))
+    return 0
+
+
+def _cmd_research_approve(args) -> int:
+    try:
+        candidate = _load_json(args.candidate)
+        doc = build_research_service().approve(
+            candidate,
+            marker_name=args.marker,
+            part_used=args.part,
+            common_name=args.common_name,
+            note=args.note,
+        )
+    except (OSError, json.JSONDecodeError, ResearchError) as exc:
+        code = getattr(exc, "code", "error")
+        print(f"{code}: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(doc, indent=2))
+    return 0
+
+
+def _cmd_suggest(args) -> int:
+    print(json.dumps(build_research_service().suggest(args.query), indent=2))
+    return 0
 
 
 def _cmd_suggest_formats(args) -> int:
-    """Advisory format ranking. Does not run the modernizer."""
     from herbenzo.format_suggestions import suggest_formats
-    from herbenzo.services.registries import UnknownIngredient, UnknownMarker
 
-    quantities: dict[str, float] = {}
     try:
+        payload = _load_json(args.approvals)
+        approvals = payload.get("approvals") if isinstance(payload, dict) and "approvals" in payload else payload
+        if not isinstance(approvals, list):
+            raise ValueError("approvals file must be a list or an object with approvals")
+        lookup = snapshot_from_approvals(approvals)
+        quantities: dict[str, float] = {}
         for raw in args.quantity or []:
-            ingredient_id, quantity = _parse_quantity(raw)
-            quantities[ingredient_id] = quantity
+            ingredient_id, amount = raw.split("=", 1)
+            quantities[ingredient_id.strip()] = float(amount)
         result = suggest_formats(
             list(args.ingredient_ids),
             audience=args.audience,
             dosage_form=args.dosage_form,
             product_name=args.product_name,
             quantities_mg=quantities,
+            registries=lookup,
         )
-    except (UnknownIngredient, UnknownMarker) as exc:
-        print(f"unknown_ingredient: {exc}", file=sys.stderr)
-        return 2
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
+    except (ResearchError, UnknownMarker, ValueError, OSError, json.JSONDecodeError) as exc:
+        code = getattr(exc, "code", "not_approved")
+        print(f"{code}: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(result, indent=2))
-    return 0
-
-
-def _cmd_markers(args) -> int:
-    client = StaticRegistriesClient()
-    print(f"{'ID':<12} {'BOTANICAL':<26} {'MARKER':<40} {'CID':>10}")
-    for rec in iter_registry_records():
-        m = rec.markers[0]
-        try:
-            cid = client.get_physicochemical_properties(m.marker_name).pubchem_cid
-        except Exception:
-            cid = "-"
-        flag = "  [efflux override]" if m.efflux_substrate else ""
-        print(f"{rec.ingredient_id:<12} {rec.botanical_name:<26} {m.marker_name:<40} {cid:>10}{flag}")
-    return 0
-
-
-def _enrichment():
-    return build_enrichment_service()
-
-
-def _cmd_enrich_propose(args) -> int:
-    try:
-        doc = _enrichment().propose(
-            args.query,
-            part_used=args.part,
-            max_markers=args.max_markers,
-            max_pmids=args.max_pmids,
-        )
-    except EnrichmentError as exc:
-        print(f"{exc.code}: {exc}", file=sys.stderr)
-        return 2
-    print(json.dumps(doc, indent=2))
-    return 0
-
-
-def _cmd_enrich_list(args) -> int:
-    rows = _enrichment().list(status=args.status)
-    if args.json:
-        print(json.dumps({"candidates": rows}, indent=2))
-        return 0
-    print(f"{'ID':<18} {'STATUS':<10} {'PROPOSED':<12} QUERY")
-    for row in rows:
-        print(
-            f"{row.get('candidate_id') or '':<18} {row.get('status') or '':<10} "
-            f"{row.get('proposed_ingredient_id') or '':<12} {row.get('query') or ''}"
-        )
-    return 0
-
-
-def _cmd_enrich_show(args) -> int:
-    try:
-        doc = _enrichment().get(args.candidate_id)
-    except EnrichmentError as exc:
-        print(f"{exc.code}: {exc}", file=sys.stderr)
-        return 2
-    print(json.dumps(doc, indent=2))
-    return 0
-
-
-def _cmd_enrich_approve(args) -> int:
-    try:
-        doc = _enrichment().approve(
-            args.candidate_id,
-            marker_name=args.marker,
-            part_used=args.part,
-            common_name=args.common_name,
-            note=args.note,
-        )
-    except EnrichmentError as exc:
-        print(f"{exc.code}: {exc}", file=sys.stderr)
-        return 2
-    decision = doc.get("decision") or {}
-    print(f"approved {doc.get('candidate_id')} as {decision.get('ingredient_id')}")
-    return 0
-
-
-def _cmd_ayush_search(args) -> int:
-    from herbenzo.services.ayush_portal import ayush_public_search
-
-    result = ayush_public_search(
-        args.query,
-        system=args.system,
-        category=args.category,
-        limit=args.limit,
-        offset=args.offset,
-    )
-    print(json.dumps(result, indent=2))
-    return 0
-
-
-def _cmd_ayush_record(args) -> int:
-    from herbenzo.services.ayush_portal import ayush_public_record
-
-    try:
-        result = ayush_public_record(args.arp_id)
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
-    print(json.dumps(result, indent=2))
-    return 0
-
-
-def _cmd_ayush_accept(args) -> int:
-    from herbenzo.config import get_settings
-    from herbenzo.services.ayush_portal import AyushPortalService
-
-    try:
-        decision = AyushPortalService.from_settings(get_settings()).accept(args.arp_id, note=args.note or "")
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
-    print(json.dumps(decision, indent=2))
-    return 0
-
-
-def _cmd_enrich_reject(args) -> int:
-    try:
-        doc = _enrichment().reject(args.candidate_id, reason=args.reason or "")
-    except EnrichmentError as exc:
-        print(f"{exc.code}: {exc}", file=sys.stderr)
-        return 2
-    print(f"rejected {doc.get('candidate_id')}")
     return 0
 
 
@@ -256,11 +170,11 @@ def main(argv: list[str] | None = None) -> int:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    r = sub.add_parser("run", help="run a FormulationSpec through the pipeline")
+    r = sub.add_parser("run", help="modernize a FormulationSpec plus approvals")
     r.add_argument("spec")
     r.add_argument("-o", "--output", default="out/report.json")
     r.add_argument("--offline", action="store_true",
-                   help="use cached descriptors only; skip all network calls")
+                   help="skip literature network calls during adjudication")
     r.set_defaults(func=_cmd_run)
 
     a = sub.add_parser("adjudicate", help="adjudicate one claim against one PMID")
@@ -272,74 +186,34 @@ def main(argv: list[str] | None = None) -> int:
                    choices=["general", "mechanism", "safety", "efficacy"])
     a.set_defaults(func=_cmd_adjudicate)
 
-    m = sub.add_parser("markers", help="list registry ingredients and their markers")
-    m.set_defaults(func=_cmd_markers)
+    research = sub.add_parser("research", help="live research for one ingredient name")
+    research.add_argument("query")
+    research.add_argument("--part", default=None)
+    research.set_defaults(func=_cmd_research)
 
-    enrich = sub.add_parser("enrich", help="propose and review ingredient candidates")
-    enrich_sub = enrich.add_subparsers(dest="enrich_cmd", required=True)
-
-    propose = enrich_sub.add_parser("propose", help="resolve a species into a pending candidate")
-    propose.add_argument("query")
-    propose.add_argument("--part", default=None, help="plant part to store on the candidate")
-    propose.add_argument("--max-markers", type=int, default=3)
-    propose.add_argument("--max-pmids", type=int, default=5)
-    propose.set_defaults(func=_cmd_enrich_propose)
-
-    listing = enrich_sub.add_parser("list", help="list enrichment candidates")
-    listing.add_argument("--status", choices=["pending", "approved", "rejected"])
-    listing.add_argument("--json", action="store_true")
-    listing.set_defaults(func=_cmd_enrich_list)
-
-    show = enrich_sub.add_parser("show", help="print one candidate evidence bundle")
-    show.add_argument("candidate_id")
-    show.set_defaults(func=_cmd_enrich_show)
-
-    approve = enrich_sub.add_parser("approve", help="promote a pending candidate into the registry")
-    approve.add_argument("candidate_id")
+    approve = sub.add_parser("research-approve", help="approve a research JSON document")
+    approve.add_argument("candidate")
     approve.add_argument("--marker", default=None)
     approve.add_argument("--part", default=None)
     approve.add_argument("--common-name", default=None)
     approve.add_argument("--note", default=None)
-    approve.set_defaults(func=_cmd_enrich_approve)
+    approve.set_defaults(func=_cmd_research_approve)
 
-    reject = enrich_sub.add_parser("reject", help="reject a pending candidate")
-    reject.add_argument("candidate_id")
-    reject.add_argument("--reason", default="")
-    reject.set_defaults(func=_cmd_enrich_reject)
+    suggest = sub.add_parser("suggest", help="live NCBI Taxonomy suggestions")
+    suggest.add_argument("query")
+    suggest.set_defaults(func=_cmd_suggest)
 
     s = sub.add_parser(
         "suggest-formats",
-        help="rank advisory finished formats for one or more ingredient ids",
+        help="rank advisory finished formats from an approvals file",
     )
+    s.add_argument("approvals", help="JSON list of approval documents, or an object with approvals")
     s.add_argument("ingredient_ids", nargs="+", metavar="INGREDIENT_ID")
     s.add_argument("--audience", choices=["kids", "teens", "adults", "elderly"])
     s.add_argument("--dosage-form", default=None)
     s.add_argument("--product-name", default=None)
-    s.add_argument(
-        "--quantity",
-        action="append",
-        default=[],
-        metavar="ID=MG",
-        help="optional milligrams per serving, repeatable (HB-ASHW=500)",
-    )
+    s.add_argument("--quantity", action="append", default=[], metavar="ID=MG")
     s.set_defaults(func=_cmd_suggest_formats)
-
-    ayush = sub.add_parser("ayush", help="Ayush Research Portal bibliographic lookup (off unless enabled)")
-    ayush_sub = ayush.add_subparsers(dest="ayush_cmd", required=True)
-    ayush_search = ayush_sub.add_parser("search", help="search ARP titles; prints hits with citations, or disabled/unavailable")
-    ayush_search.add_argument("query")
-    ayush_search.add_argument("--system", default="any")
-    ayush_search.add_argument("--category", default="any")
-    ayush_search.add_argument("--limit", type=int, default=None)
-    ayush_search.add_argument("--offset", type=int, default=0, help="row offset (portal startPage)")
-    ayush_search.set_defaults(func=_cmd_ayush_search)
-    ayush_record = ayush_sub.add_parser("record", help="fetch one ARP record page by ARP id")
-    ayush_record.add_argument("arp_id")
-    ayush_record.set_defaults(func=_cmd_ayush_record)
-    ayush_accept = ayush_sub.add_parser("accept", help="mark an ARP id reviewer-accepted")
-    ayush_accept.add_argument("arp_id")
-    ayush_accept.add_argument("--note", default="")
-    ayush_accept.set_defaults(func=_cmd_ayush_accept)
 
     args = p.parse_args(argv)
     return args.func(args)

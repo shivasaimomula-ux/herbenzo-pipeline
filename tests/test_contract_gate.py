@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from herbenzo.components.modernizer.modernizer import ModernizerEngine
+from tests.legacy_snapshot import legacy_lookup
 from herbenzo.contract_gate import (
     attach_provenance_thread,
     to_engine_payload,
@@ -65,7 +66,7 @@ def test_attach_provenance_thread_adds_sku():
         "stages": ["A"],
     }
     spec = validate_inbound_formulation_spec(raw)
-    sku_local = ModernizerEngine().modernize(to_engine_payload(spec))
+    sku_local = ModernizerEngine(legacy_lookup()).modernize(to_engine_payload(spec))
     outbound = validate_outbound_modernized_sku(sku_local)
     with_thread = attach_provenance_thread(spec, outbound)
     assert with_thread.provenance_thread is not None

@@ -6,14 +6,13 @@ Consumes a validated ``FormulationSpec`` from Component A and emits a validated
 Pipeline: marker resolution → BCS classification → delivery-system selection,
 with dose normalization applied per ingredient.
 
-Failure posture: an ingredient that cannot be resolved in the registry raises
-rather than being guessed at. The one exception is advisory, not a success
-path for chemistry: a classical Ayurvedic preparation whose registry row has
-no standardization marker does not raise and is left off the ModernizedSKU.
-No marker, BCS class, or delivery system is invented for it. The indicator
-is ``engine.classical_active_marker_gap``. A formulation that fails schema
-validation is rejected at the boundary. Confidence can only fall, and the
-indicator itself does not lower it.
+Failure posture: an ingredient that is not on this request's approval snapshot
+raises rather than being guessed at. An approved ingredient with no marker is
+not a failure. It is left off the ModernizedSKU and named on
+``classical_active_marker_gap``. No marker, BCS class, or delivery system is
+invented for it. A formulation that fails schema validation is rejected at
+the boundary. Confidence can only fall, and the indicator itself does not
+lower it.
 """
 
 from __future__ import annotations
@@ -31,9 +30,8 @@ from herbenzo.schemas.contracts import (
     ModernizedSKU,
 )
 from herbenzo.services.classical_marker_gap import classical_active_marker_gap
-from herbenzo.services.registries import (
-    RegistriesClient,
-    StaticRegistriesClient,
+from herbenzo.services.records import (
+    SnapshotLookup,
     marker_dose_mg,
     normalize_extract_ratio,
 )
@@ -51,10 +49,14 @@ class ModernizerEngine:
 
     def __init__(
         self,
-        registries: RegistriesClient | None = None,
+        lookup: SnapshotLookup | None = None,
         engine_version: str = ENGINE_VERSION,
+        registries: SnapshotLookup | None = None,
     ) -> None:
-        self.registries: RegistriesClient = registries or StaticRegistriesClient()
+        # ``registries`` is the previous constructor name. It is a request snapshot,
+        # not a stored ingredient list.
+        self.lookup: SnapshotLookup = lookup or registries or SnapshotLookup()
+        self.registries = self.lookup
         self.engine_version = engine_version
         self.classical_active_marker_gap: dict | None = None
 
@@ -71,15 +73,14 @@ class ModernizerEngine:
         retrieved and adjudicated upstream. Anything absent from it yields a
         qualitative expectation rather than an asserted number.
 
-        Returns ``None`` only when every ingredient is a classical preparation
-        with no registry marker. That is not a failure: the indicator on
-        ``classical_active_marker_gap`` explains the gap, and no chemistry is
-        fabricated to force a SKU into existence.
+        Returns ``None`` only when every approved ingredient has no marker.
+        That is not a failure: the indicator on ``classical_active_marker_gap``
+        explains the gap, and no chemistry is fabricated to force a SKU.
         """
         self.classical_active_marker_gap = None
         spec = self._validate_input(spec)
         evidence = bioavailability_evidence or {}
-        indicator = classical_active_marker_gap(spec, self.registries)
+        indicator = classical_active_marker_gap(spec, self.lookup)
         self.classical_active_marker_gap = indicator
         gapped = {
             item["ingredient_id"]
@@ -90,8 +91,8 @@ class ModernizerEngine:
         for ing in spec.ingredients:
             if ing.ingredient_id in gapped:
                 continue
-            marker_rec = self.registries.lookup_marker(ing.ingredient_id)
-            props = self.registries.get_physicochemical_properties(marker_rec.marker_name)
+            marker_rec = self.lookup.lookup_marker(ing.ingredient_id)
+            props = self.lookup.get_physicochemical_properties(marker_rec.marker_name)
 
             assessment = classify(props, marker_rec)
             delivery = recommend(assessment, marker_rec, evidence.get(ing.ingredient_id))

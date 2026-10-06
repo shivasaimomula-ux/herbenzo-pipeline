@@ -1,18 +1,17 @@
-"""Advisory indicator for classical Ayurvedic forms with no active-marker assignment.
+"""Advisory indicator for an approved ingredient with no standardization marker.
 
-The signal is a gap already stored on the ingredient registry: ``markers`` is
-empty. This module does not invent a marker, a physicochemical profile, or a
-pharmacological claim.
+The signal is an empty marker list on this request's approval. It is not a
+registry miss. This module does not invent a marker, a physicochemical
+profile, or a pharmacological claim.
 
-A hit is indicator-only. Callers must keep modernization, evidence retrieval,
-and citation adjudication running, and must not treat the indicator as a
-confidence-floor violation.
+A hit is indicator-only. Callers must keep modernization of marker-backed
+ingredients running, and must not treat the indicator as a confidence-floor
+violation. The code name stays ``classical_active_marker_gap`` so existing
+readers keep working; the flag now also covers non-classical forms.
 
 herbenzo-contracts has no field for this yet. The pipeline report carries it
-*beside* ``sku`` (``classical_active_marker_gap``). The HTTP body adds the same
-object only after outbound contract validation, so a marker-backed
-ModernizedSKU still validates. When contracts grow an optional field, it can
-move onto the SKU without changing this detection.
+*beside* ``sku``. The HTTP body adds the same object only after outbound
+contract validation.
 """
 
 from __future__ import annotations
@@ -59,13 +58,13 @@ CLASSICAL_PREPARATION_FORMS: tuple[str, ...] = (
 _FORM_SET = frozenset(CLASSICAL_PREPARATION_FORMS)
 _TOKEN = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 
-_GAP_REASON = "no standardization marker assigned in the ingredient registry"
+_GAP_REASON = "no standardization marker on this approved ingredient"
 
 _MESSAGE = (
-    "Classical Ayurvedic preparation has no established active-marker data "
-    "in the ingredient registry. Indicator only: modernization, evidence "
-    "retrieval, and citation adjudication are not stopped, and this is not "
-    "a confidence-floor violation."
+    "An approved ingredient has no PubChem standardization marker. "
+    "Indicator only: marker-backed ingredients are still modernized, and this "
+    "is not a confidence-floor violation. Add a marker before a chemistry-backed "
+    "SKU is required for this ingredient."
 )
 
 
@@ -95,16 +94,13 @@ def classical_active_marker_gap(
     spec: FormulationSpec,
     registries,
 ) -> dict | None:
-    """Build the advisory payload, or ``None`` when the indicator does not apply.
+    """Build the advisory payload, or ``None`` when every ingredient has a marker.
 
-    ``registries`` is anything with ``lookup_ingredient``. Unknown ingredient
-    IDs still raise ``UnknownIngredient`` — missing identity is not this
-    indicator. A named marker whose physicochemical cache is empty is also
-    not this indicator; that remains ``UnknownMarker`` from descriptor lookup.
+    ``registries`` is anything with ``lookup_ingredient``. An id that is not on
+    the approval snapshot still raises. A named marker whose descriptor block
+    is missing is not this indicator; descriptor lookup raises ``UnknownMarker``.
     """
     forms = matched_classical_forms(spec.dosage_form, spec.product_name)
-    if not forms:
-        return None
 
     gaps: list[dict] = []
     for ing in spec.ingredients:

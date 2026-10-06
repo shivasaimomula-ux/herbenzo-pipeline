@@ -13,8 +13,8 @@ import pytest
 from herbenzo.clients.pubmed import Article, _parse_articles
 from herbenzo.services.adjudication import AdjudicationService, ReasonCode, Verdict
 from herbenzo.services.evidence import EvidenceStore
-from herbenzo.services.live_registries import LiveRegistriesClient
-from herbenzo.services.registries import UnknownMarker
+from herbenzo.services.records import ResearchError, UnknownMarker
+from tests.legacy_snapshot import legacy_lookup
 
 # ---------------------------------------------------------------------------
 # Fixtures — shaped exactly as the PubMed client emits them
@@ -190,13 +190,13 @@ class TestPubMedParsing:
 # ---------------------------------------------------------------------------
 
 def test_offline_registry_refuses_network_for_unknown_marker():
-    client = LiveRegistriesClient(allow_network=False)
+    client = legacy_lookup()
     with pytest.raises(UnknownMarker):
         client.get_physicochemical_properties("Not A Real Compound")
 
 
 def test_cached_markers_resolve_without_network():
-    client = LiveRegistriesClient(allow_network=False)
+    client = legacy_lookup()
     p = client.get_physicochemical_properties("Curcumin")
     assert p.pubchem_cid == 969516
 
@@ -205,7 +205,7 @@ def test_offline_pipeline_runs_and_declares_no_support(tmp_path):
     from herbenzo.pipeline import Pipeline
     pipe = Pipeline(allow_network=False,
                     evidence=FakeStore(tmp_path),
-                    registries=LiveRegistriesClient(allow_network=False))
+                    lookup=legacy_lookup())
     report = pipe.run({
         "formulation_id": "F-T", "product_name": "T", "dosage_form": "capsule",
         "target_market": "US", "servings_per_day": 1, "confidence": 0.9,
@@ -221,7 +221,7 @@ def test_confidence_never_rises_through_the_pipeline(tmp_path):
     from herbenzo.pipeline import Pipeline
     pipe = Pipeline(allow_network=False,
                     evidence=FakeStore(tmp_path),
-                    registries=LiveRegistriesClient(allow_network=False))
+                    lookup=legacy_lookup())
     for inherited in (0.2, 0.5, 0.95):
         rep = pipe.run({
             "formulation_id": "F", "product_name": "P", "dosage_form": "capsule",
@@ -244,7 +244,7 @@ def test_claim_ids_are_stable_and_unique(tmp_path):
                          "botanical_name": "Piper longum", "quantity_mg": 100.0}],
     }
     mk = lambda: Pipeline(allow_network=False, evidence=FakeStore(tmp_path),
-                          registries=LiveRegistriesClient(allow_network=False)).run(spec)
+                          lookup=legacy_lookup()).run(spec)
     a, b = mk(), mk()
     ids_a = [c["claim_id"] for c in a["claims"]]
     assert ids_a == [c["claim_id"] for c in b["claims"]]
