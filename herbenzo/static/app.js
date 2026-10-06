@@ -416,7 +416,7 @@ function renderSuggestions() {
     if (status) status.textContent = "";
     return;
   }
-  if (status) status.textContent = "Searching NCBI Taxonomy…";
+  if (status) status.textContent = "Searching NCBI, GBIF, and Wikidata…";
   const serial = ++suggestSerial;
   suggestTimer = window.setTimeout(async () => {
     try {
@@ -429,26 +429,24 @@ function renderSuggestions() {
       if (!rows.length) {
         el.ingredientSuggest.hidden = true;
         el.ingredientSuggest.innerHTML = "";
-        if (status) status.textContent = body.error ? "No suggestions (taxonomy lookup failed)." : "No matching species.";
+        if (status) {
+          const notes = Array.isArray(body.source_notes) ? body.source_notes.filter(Boolean) : [];
+          const lead = body.error ? "No suggestions (taxonomy lookup failed)." : "No matching species.";
+          status.textContent = [lead, ...notes].join(" ");
+        }
         return;
       }
       el.ingredientSuggest.hidden = false;
       el.ingredientSuggest.innerHTML = rows
         .map((row) => {
           const commons = (row.common_names || []).concat(row.synonyms || []).join(", ");
-          const label = `${row.scientific_name} · ${row.rank || "rank unknown"} · tax ${row.tax_id}${commons ? " · " + commons : ""}`;
-          return `<li><button type="button" data-scientific-name="${escapeHtml(row.scientific_name)}" data-tax-id="${escapeHtml(row.tax_id)}">${escapeHtml(label)}</button></li>`;
+          const sources = Array.isArray(row.sources) && row.sources.length ? row.sources.join(", ") : "NCBI Taxonomy";
+          const label = `${row.scientific_name} · ${row.rank || "rank unknown"} · tax ${row.tax_id} · ${sources}${commons ? " · " + commons : ""}`;
+          const sourceAttr = (Array.isArray(row.sources) ? row.sources : []).join("|");
+          return `<li><button type="button" data-scientific-name="${escapeHtml(row.scientific_name)}" data-tax-id="${escapeHtml(row.tax_id)}" data-sources="${escapeHtml(sourceAttr)}">${escapeHtml(label)}</button></li>`;
         })
         .join("");
-      if (status) {
-        if (rows.length > 1) {
-          status.textContent = "Several taxa match. Pick a scientific name and tax id. Nothing is selected for you.";
-        } else if (body.ambiguous) {
-          status.textContent = "This name is not the scientific name. Pick the row. Nothing is selected for you.";
-        } else {
-          status.textContent = "";
-        }
-      }
+      if (status) status.textContent = suggestionStatus(body, rows);
     } catch (err) {
       if (serial !== suggestSerial) return;
       el.ingredientSuggest.hidden = true;
@@ -603,6 +601,20 @@ const approvedById = new Map();
 window.herbenzoApproved = approvedById;
 let suggestTimer = 0;
 let suggestSerial = 0;
+let pickedName = "";
+let pickedQuery = "";
+let pickedSources = [];
+
+function suggestionStatus(body, rows) {
+  const notes = Array.isArray(body.source_notes) ? body.source_notes.filter(Boolean) : [];
+  let lead = "";
+  if (rows.length > 1) {
+    lead = "Several taxa match. Pick a scientific name and tax id. Nothing is selected for you.";
+  } else if (body.ambiguous) {
+    lead = "This name is not the scientific name. Pick the row. Nothing is selected for you.";
+  }
+  return [lead, ...notes].filter(Boolean).join(" ");
+}
 let lastCandidate = null;
 
 function renderDraftList(drafts) {
@@ -688,10 +700,15 @@ async function researchCurrentName() {
     return;
   }
   setStatus(null, "Researching…");
+  const payload = { query };
+  if (pickedName && query.toLowerCase() === pickedName.toLowerCase() && pickedSources.length) {
+    payload.name_sources = pickedSources;
+    payload.name_query = pickedQuery;
+  }
   const res = await fetch("/research", {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json" },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify(payload),
   });
   const body = await res.json().catch(() => null);
   if (!res.ok) {
@@ -1195,7 +1212,15 @@ el.addIngredient.addEventListener("click", () => {
   if (select) select.focus();
 });
 
-el.ingredientSearch.addEventListener("input", renderSuggestions);
+el.ingredientSearch.addEventListener("input", () => {
+  const typed = el.ingredientSearch.value.trim().toLowerCase();
+  if (!pickedName || typed !== pickedName.toLowerCase()) {
+    pickedName = "";
+    pickedQuery = "";
+    pickedSources = [];
+  }
+  renderSuggestions();
+});
 el.ingredientSearch.addEventListener("keydown", (event) => {
   if (event.key !== "Enter") return;
   event.preventDefault();
@@ -1205,7 +1230,10 @@ el.ingredientSuggest.addEventListener("mousedown", (event) => {
   const button = event.target.closest("[data-scientific-name]");
   if (!button) return;
   event.preventDefault();
-  el.ingredientSearch.value = button.dataset.scientificName;
+  pickedQuery = el.ingredientSearch.value.trim();
+  pickedName = button.dataset.scientificName || "";
+  pickedSources = (button.dataset.sources || "").split("|").map((item) => item.trim()).filter(Boolean);
+  el.ingredientSearch.value = pickedName;
   el.ingredientSuggest.hidden = true;
   const status = document.getElementById("ingredient-suggest-status");
   if (status) status.textContent = "Suggestion selected. Research still has to pass identity and evidence.";

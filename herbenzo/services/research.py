@@ -26,6 +26,14 @@ from herbenzo.services.enrich_parse import (
 )
 from herbenzo.services.imppat import ImppatLookup, approved_context
 from herbenzo.services.llm_config import validate_llm_settings
+from herbenzo.services.name_sources import (
+    SOURCE_NCBI_COMMON,
+    SOURCE_NCBI_SCIENTIFIC,
+    SOURCE_NCBI_SYNONYM,
+    NameSources,
+    QuietNameSources,
+    clean_binomial,
+)
 from herbenzo.services.records import ResearchError
 from herbenzo.services.research_extract import (
     constituent_names,
@@ -45,9 +53,22 @@ _UNII_TITLE = re.compile(r"^[A-Z0-9]{6,12}$")
 _MAX_NAME_LOOKUPS = 6
 _MAX_CID_LINKS = 8
 _TAXONOMY_NAME_FIELDS = ("Scientific Name", "Common Name", "Synonym")
+_FIELD_SOURCE = {
+    "Scientific Name": SOURCE_NCBI_SCIENTIFIC,
+    "Common Name": SOURCE_NCBI_COMMON,
+    "Synonym": SOURCE_NCBI_SYNONYM,
+}
+_MAX_RECONCILE = 25
+_SUGGEST_SOURCE = "NCBI Taxonomy, GBIF vernacular, Wikidata"
 
 
-def _suggest_payload(query: str, suggestions: list[dict[str, Any]], *, error: str | None) -> dict[str, Any]:
+def _suggest_payload(
+    query: str,
+    suggestions: list[dict[str, Any]],
+    *,
+    error: str | None,
+    notes: list[str] | None = None,
+) -> dict[str, Any]:
     exact = [row for row in suggestions if row.get("exact_scientific_match")]
     ambiguous = len(suggestions) != 1 or not exact
     return {
@@ -55,9 +76,87 @@ def _suggest_payload(query: str, suggestions: list[dict[str, Any]], *, error: st
         "suggestions": suggestions,
         "ambiguous": ambiguous,
         "auto_selected": None,
-        "source": "NCBI Taxonomy",
+        "source": _SUGGEST_SOURCE,
+        "source_notes": list(notes or []),
         "error": error,
     }
+
+
+def _suggestion_row(
+    record: dict[str, Any] | None,
+    query: str,
+    *,
+    matched_fields: list[str],
+    sources: list[str] | None = None,
+) -> dict[str, Any] | None:
+    if not record or not record.get("scientific_name"):
+        return None
+    if str(record.get("rank") or "").strip().casefold() != "species":
+        return None
+    scientific = str(record["scientific_name"])
+    labels: list[str] = []
+    for field in matched_fields:
+        label = _FIELD_SOURCE.get(field)
+        if label and label not in labels:
+            labels.append(label)
+    _union_sources({"sources": labels}, sources or [])
+    return {
+        "scientific_name": scientific,
+        "common_names": list(record.get("common_names") or []),
+        "synonyms": list(record.get("synonyms") or []),
+        "rank": record.get("rank"),
+        "tax_id": record.get("tax_id"),
+        "matched_fields": list(matched_fields),
+        "sources": labels,
+        "exact_scientific_match": scientific.casefold() == query.casefold(),
+    }
+
+
+def _is_species_binomial(record: dict[str, Any] | None, binomial: str) -> bool:
+    if not record:
+        return False
+    if str(record.get("rank") or "").strip().casefold() != "species":
+        return False
+    return clean_binomial(str(record.get("scientific_name") or "")) == binomial
+
+
+def _merge_name_candidates(candidates: list[Any]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        binomial = clean_binomial(str(candidate.get("binomial") or ""))
+        if not binomial:
+            continue
+        key = binomial.casefold()
+        if key not in merged:
+            merged[key] = {"binomial": binomial, "sources": [], "ncbi_tax_id": None}
+            order.append(key)
+        _union_sources(merged[key], candidate.get("sources") or [])
+        if merged[key].get("ncbi_tax_id") is None:
+            merged[key]["ncbi_tax_id"] = _as_int(candidate.get("ncbi_tax_id"))
+    return [merged[key] for key in order]
+
+
+def _union_sources(row: dict[str, Any], sources: Any) -> None:
+    current = row.setdefault("sources", [])
+    for item in _source_list(sources):
+        if item not in current:
+            current.append(item)
+
+
+def _source_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    found: list[str] = []
+    for item in value:
+        text = str(item).strip()
+        if text and text not in found:
+            found.append(text)
+    return found
 
 
 def stored_pubmed_count(literature: dict[str, Any] | None) -> int:
@@ -82,6 +181,7 @@ class ResearchService:
         chemclass: ChemicalTaxonomyClient | None = None,
         llm: LlmClient | None = None,
         imppat: ImppatLookup | None = None,
+        names: Any | None = None,
         min_pubmed_refs: int | None = None,
         web_search_endpoint: str | None = None,
     ) -> None:
@@ -95,6 +195,7 @@ class ResearchService:
             model=settings.llm_model,
         )
         self.imppat = imppat if imppat is not None else ImppatLookup(settings.imppat_dir)
+        self.names = names if names is not None else QuietNameSources()
         self.min_pubmed_refs = settings.min_pubmed_refs if min_pubmed_refs is None else int(min_pubmed_refs)
         self.web_search_endpoint = (
             settings.web_search_endpoint if web_search_endpoint is None else web_search_endpoint
@@ -107,6 +208,8 @@ class ResearchService:
         part_used: str | None = None,
         max_markers: int = 8,
         max_pmids: int = 5,
+        name_sources: list[str] | None = None,
+        name_query: str | None = None,
     ) -> dict[str, Any]:
         name = (query or "").strip()
         if not name:
@@ -141,7 +244,7 @@ class ResearchService:
         justification = self._advisory_narrative(taxonomy, literature, markers)
         now = _now()
         tax_id = taxonomy["tax_id"]
-        return {
+        doc = {
             "schema_version": "research/1",
             "status": "pending",
             "query": name,
@@ -173,15 +276,62 @@ class ResearchService:
             },
             "web": {"status": "not_requested", "results": []},
         }
+        return apply_name_match(doc, name_sources=name_sources, name_query=name_query)
 
     def suggest(self, query: str) -> dict[str, Any]:
-        """Live taxonomy suggestions across scientific, common, and synonym names.
+        """Live suggestions from NCBI plus GBIF and Wikidata common names.
 
-        Every matching taxon is returned. Nothing is chosen for the caller.
+        Every species-rank match is returned. Nothing is chosen for the caller.
+        A binomial from another source is listed only after NCBI confirms it.
         """
         text = (query or "").strip()
         if len(text) < 2:
             return _suggest_payload(text, [], error=None)
+        by_tax: dict[str, dict[str, Any]] = {}
+        errors: list[str] = []
+        notes: list[str] = []
+        ids, matched, field_errors = self._ncbi_name_ids(text)
+        errors.extend(field_errors)
+        for tax_id in ids[:20]:
+            try:
+                record = self._taxonomy_by_id(str(tax_id), query_label=text)
+            except Exception as exc:
+                errors.append(str(exc))
+                continue
+            row = _suggestion_row(record, text, matched_fields=matched.get(str(tax_id), []))
+            if row:
+                by_tax[str(row["tax_id"])] = row
+        try:
+            found = self.names.collect(text)
+        except Exception as exc:
+            found = {"candidates": [], "notes": []}
+            notes.append(f"Common-name sources are unavailable ({exc}); NCBI results are still listed.")
+        for note in found.get("notes") or []:
+            if note and note not in notes:
+                notes.append(str(note))
+        candidates = _merge_name_candidates(found.get("candidates") or [])
+        if len(candidates) > _MAX_RECONCILE:
+            notes.append(
+                "Some vernacular matches were not checked against NCBI in this pass."
+            )
+            candidates = candidates[:_MAX_RECONCILE]
+        confirm_failed = False
+        for candidate in candidates:
+            try:
+                self._reconcile_candidate(candidate, by_tax, text)
+            except Exception as exc:
+                confirm_failed = True
+                errors.append(str(exc))
+        if confirm_failed:
+            notes.append("NCBI Taxonomy could not confirm every name from the other sources.")
+        suggestions = sorted(
+            by_tax.values(),
+            key=lambda row: (str(row.get("scientific_name") or "").casefold(), row.get("tax_id") or 0),
+        )
+        error = None if suggestions else (errors[0] if errors else None)
+        return _suggest_payload(text, suggestions, error=error, notes=notes)
+
+    def _ncbi_name_ids(self, text: str) -> tuple[list[str], dict[str, list[str]], list[str]]:
         ids: list[str] = []
         matched: dict[str, list[str]] = {}
         errors: list[str] = []
@@ -198,30 +348,40 @@ class ResearchService:
                     matched[key] = []
                 if field not in matched[key]:
                     matched[key].append(field)
-        suggestions: list[dict[str, Any]] = []
-        lookup_error: str | None = None
-        for tax_id in ids[:20]:
-            try:
-                record = self._taxonomy_by_id(str(tax_id), query_label=text)
-            except Exception as exc:
-                lookup_error = str(exc)
-                continue
-            if not record or not record.get("scientific_name"):
-                continue
-            scientific = str(record.get("scientific_name"))
-            suggestions.append(
-                {
-                    "scientific_name": scientific,
-                    "common_names": list(record.get("common_names") or []),
-                    "synonyms": list(record.get("synonyms") or []),
-                    "rank": record.get("rank"),
-                    "tax_id": record.get("tax_id"),
-                    "matched_fields": list(matched.get(str(tax_id), [])),
-                    "exact_scientific_match": scientific.casefold() == text.casefold(),
-                }
-            )
-        error = None if suggestions else (lookup_error or (errors[0] if errors and not ids else None))
-        return _suggest_payload(text, suggestions, error=error)
+        return ids, matched, errors
+
+    def _reconcile_candidate(self, candidate: dict[str, Any], by_tax: dict[str, dict[str, Any]], query: str) -> None:
+        """Attach one external binomial only when NCBI has that species."""
+        binomial = clean_binomial(str(candidate.get("binomial") or ""))
+        sources = [str(item) for item in (candidate.get("sources") or []) if str(item).strip()]
+        if not binomial or not sources:
+            return
+        for row in by_tax.values():
+            if clean_binomial(str(row.get("scientific_name") or "")) == binomial:
+                _union_sources(row, sources)
+                return
+        record = None
+        hinted = _as_int(candidate.get("ncbi_tax_id"))
+        if hinted is not None:
+            record = self._taxonomy_by_id(str(hinted), query_label=query)
+            if not _is_species_binomial(record, binomial):
+                record = None
+        if record is None:
+            found = self._search("taxonomy", f"{binomial}[Scientific Name]", retmax=5)
+            for tax_id in (found.get("ids") or [])[:5]:
+                fetched = self._taxonomy_by_id(str(tax_id), query_label=query)
+                if _is_species_binomial(fetched, binomial):
+                    record = fetched
+                    break
+        if record is None:
+            return
+        key = str(record.get("tax_id"))
+        if key in by_tax:
+            _union_sources(by_tax[key], sources)
+            return
+        row = _suggestion_row(record, query, matched_fields=[], sources=sources)
+        if row:
+            by_tax[key] = row
 
     def approve(
         self,
@@ -855,6 +1015,7 @@ class ResearchService:
             "note": (note or "").strip() or None,
             "research_path": candidate.get("research_path"),
             "retrieved_at": candidate.get("retrieved_at"),
+            "name_match": candidate.get("name_match") if isinstance(candidate.get("name_match"), dict) else None,
         }
 
     def _advisory_narrative(self, taxonomy: dict, literature: dict, markers: list[dict]) -> dict[str, Any]:
@@ -921,19 +1082,46 @@ class ResearchService:
 
 def build_research_service() -> ResearchService:
     settings = get_settings()
+    llm = LlmClient(
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        model=settings.llm_model,
+    )
     return ResearchService(
         eutils=_live_eutils(settings),
         pubchem=_live_pubchem(),
         chemclass=ChemicalTaxonomyClient(cache_enabled=False),
-        llm=LlmClient(
-            api_key=settings.llm_api_key,
-            base_url=settings.llm_base_url,
-            model=settings.llm_model,
-        ),
+        llm=llm,
         imppat=ImppatLookup(settings.imppat_dir),
+        names=NameSources(llm=llm),
         min_pubmed_refs=settings.min_pubmed_refs,
         web_search_endpoint=settings.web_search_endpoint,
     )
+
+
+def apply_name_match(
+    doc: dict[str, Any],
+    *,
+    name_sources: list[str] | None = None,
+    name_query: str | None = None,
+) -> dict[str, Any]:
+    """Record which catalog produced the name the caller picked."""
+    taxonomy = doc.get("taxonomy") if isinstance(doc.get("taxonomy"), dict) else {}
+    scientific = str(taxonomy.get("scientific_name") or "")
+    query = (name_query or doc.get("query") or "").strip()
+    sources = _source_list(name_sources)
+    if not sources:
+        if query and scientific and query.casefold() == scientific.casefold():
+            sources = [SOURCE_NCBI_SCIENTIFIC]
+        elif scientific:
+            sources = ["NCBI Taxonomy"]
+    doc["name_match"] = {
+        "query": query or doc.get("query"),
+        "scientific_name": scientific,
+        "tax_id": taxonomy.get("tax_id"),
+        "sources": sources,
+    }
+    return doc
 
 
 def judge_name_cids(

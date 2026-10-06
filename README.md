@@ -37,11 +37,11 @@ Open `http://127.0.0.1:8003/`.
 
 ### Compose
 
-Free text is the primary ingredient input. On top of that field, a dropdown queries live NCBI Taxonomy. It is a suggestion helper, not a stored list and not an approval.
+Free text is the primary ingredient input. On top of that field, a dropdown queries live NCBI Taxonomy, GBIF vernacular names, and Wikidata. It is a suggestion helper, not a stored list and not an approval. Those calls are not cached.
 
 1. Set formulation id, product name, finished form, market, servings, and confidence.
-2. Type a scientific or common name. After two characters the field waits about 300 ms, shows “Searching NCBI Taxonomy…”, and calls `GET /research/suggest?q=`. The search covers scientific names, common names, and synonyms. Every matching taxon is listed with its scientific name and tax id. A common name is not reduced to the first hit, and nothing is selected until you click a row. An empty or failed taxonomy search returns HTTP 200 with `suggestions: []`.
-3. **Research** posts `POST /research` for the scientific name in the field. **Approve** posts `{ "candidate": ... }` to `POST /research/approve`. That approval stays on this formulation (`window.herbenzoApproved`) and in the draft file if you save. It is the document modernize uses.
+2. Type a scientific or common name. After two characters the field waits about 300 ms, shows “Searching NCBI, GBIF, and Wikidata…”, and calls `GET /research/suggest?q=`. NCBI is searched on scientific name, common name, and synonym. GBIF is searched with `qField=VERNACULAR`. Wikidata uses entity search and SPARQL for labels, aliases, and taxon common names (P1843) in English, Hindi, Sanskrit, and Telugu, then reads the scientific name (P225) and NCBI taxon id (P685). If Gemini is configured, it may add candidate binomials for a traditional name. Every binomial is reconciled to an NCBI **species** before it is listed. Rows are merged by NCBI tax id. Each row shows which source suggested it (`NCBI common name`, `GBIF vernacular`, `Wikidata`, `Gemini web research`). Nothing is selected until you click a row. A common name that maps to several plants, such as Shankhpushpi, stays a list. If GBIF or Wikidata is down, the NCBI rows are still returned and `source_notes` says so. An empty or failed lookup returns HTTP 200 with `suggestions: []`.
+3. **Research** posts `POST /research` for the scientific name in the field. A picked row also sends `name_sources` and `name_query`, so the approval records which catalog matched the common name. **Approve** posts `{ "candidate": ... }` to `POST /research/approve`. That approval stays on this formulation (`window.herbenzoApproved`) and in the draft file if you save. It is the document modernize uses.
 4. **Run Modernize** posts `{ "spec": FormulationSpec, "approvals": [...] }`. A bare FormulationSpec with no approvals returns **422** `not_approved`.
 
 **Load ashwagandha** prefills `Withania somnifera`. **Load Triphala** prefills `Terminalia chebula`. Neither injects an approved row. You still research and approve.
@@ -54,7 +54,7 @@ Free text is the primary ingredient input. On top of that field, a dropdown quer
 |--------|------|---------|
 | `GET` | `/` | Compose form, raw JSON, review panel |
 | `GET` | `/health` | `llm` is always `false` (modernize does not call a model). `llm_config` reports whether research can call Gemini |
-| `GET`/`POST` | `/research/suggest` | Live NCBI Taxonomy suggestions. Failures stay HTTP 200 with an empty list |
+| `GET`/`POST` | `/research/suggest` | Live NCBI, GBIF, and Wikidata suggestions. Failures stay HTTP 200 with an empty list and a note |
 | `POST` | `/research` | Live research for one name. Not saved |
 | `POST` | `/research/approve` | Stateless approval of the posted candidate |
 | `POST` | `/research/marker` | Set or replace a PubChem-verified marker on an approval |
@@ -101,7 +101,7 @@ The berberine P-gp efflux flag is a classifier rule. It is honored only when the
 
 ### Provenance
 
-`research_provenance` sits beside the ModernizedSKU, same pattern as `classical_active_marker_gap`. `herbenzo-contracts` `ModernizedSKU` uses `extra="forbid"`, so the field is not inside the SKU. The snapshot records taxonomy id, PMIDs, CIDs, URLs, retrieval times, PubChem numerics, and the approval decision. It is part of the response, not a database. When `sku` is null the provenance object is still returned.
+`research_provenance` sits beside the ModernizedSKU, same pattern as `classical_active_marker_gap`. `herbenzo-contracts` `ModernizedSKU` uses `extra="forbid"`, so the field is not inside the SKU. The snapshot records taxonomy id, PMIDs, CIDs, URLs, retrieval times, PubChem numerics, the approval decision, and `name_match` (the query, scientific name, tax id, and which source produced the name). It is part of the response, not a database. When `sku` is null the provenance object is still returned.
 
 ## Research front door
 
@@ -136,11 +136,15 @@ Tests, all mocked, no live network:
 - `test_unapproved_research_does_not_modernize`
 - `test_compose_approve_posts_the_candidate_and_modernizes_it`
 - `test_butterfly_pea_suggests_every_taxon_and_picks_none`
+- `test_shankhpushpi_lists_every_species_and_picks_none`
+- `test_name_source_outage_keeps_the_other_results`
+- `test_non_species_and_unreconcilable_names_are_dropped`
+- `test_gemini_binomials_are_kept_only_after_ncbi_species_confirmation`
 - `test_gemini_loop_cap_and_fallback`
 
 ## Trade-offs
 
-Live research adds latency and depends on NCBI, PubChem, and optionally Gemini. NCBI rate limits apply (3 requests/second without `NCBI_API_KEY`, 10 with a key). Evidence can differ from run to run because PubMed ranking and tool choices are not frozen. The provenance snapshot on the modernize response records what that request actually used, so a SKU can be audited without a registry. Research HTTP clients do not write the shared response cache (`cache_enabled=False`). Adjudication still uses the PubMed PMID cache.
+Live research adds latency and depends on NCBI, PubChem, GBIF, Wikidata, and optionally Gemini. NCBI rate limits apply (3 requests/second without `NCBI_API_KEY`, 10 with a key). GBIF and Wikidata are called without an API key, with a short gap between requests and an 8 second timeout (6 seconds for Wikidata SPARQL). If one of those hosts is down, suggestions still return the sources that answered, plus `source_notes`. Evidence can differ from run to run because PubMed ranking and tool choices are not frozen. The provenance snapshot on the modernize response records what that request actually used, including which source matched the name, so a SKU can be audited without a registry. Research HTTP clients do not write the shared response cache (`cache_enabled=False`), and common-name lookups are not cached either. Adjudication still uses the PubMed PMID cache.
 
 ## CLI
 

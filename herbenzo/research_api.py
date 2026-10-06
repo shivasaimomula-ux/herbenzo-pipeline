@@ -54,10 +54,14 @@ async def research(request: Request):
     if not isinstance(query, str) or not query.strip():
         raise HTTPException(status_code=422, detail=http_error_detail(ValueError("query is required")))
     part = payload.get("part_used")
+    sources = payload.get("name_sources")
+    name_query = payload.get("name_query")
     try:
         return get_front_door().research(
             query.strip(),
             part_used=part if isinstance(part, str) else None,
+            name_sources=sources if isinstance(sources, list) else None,
+            name_query=name_query if isinstance(name_query, str) else None,
         )
     except ResearchError as exc:
         raise _error(exc) from exc
@@ -68,7 +72,14 @@ def research_suggest(q: str = ""):
     try:
         return get_front_door().service.suggest(q)
     except ResearchError as exc:
-        return {"query": q, "suggestions": [], "source": "NCBI Taxonomy", "error": str(exc)}
+        return {
+            "query": q,
+            "suggestions": [],
+            "auto_selected": None,
+            "source": "NCBI Taxonomy, GBIF vernacular, Wikidata",
+            "source_notes": [str(exc)],
+            "error": str(exc),
+        }
 
 
 @router.post("/research/suggest")
@@ -80,7 +91,14 @@ async def research_suggest_post(request: Request):
     try:
         return get_front_door().service.suggest(query)
     except ResearchError as exc:
-        return {"query": query, "suggestions": [], "source": "NCBI Taxonomy", "error": str(exc)}
+        return {
+            "query": query,
+            "suggestions": [],
+            "auto_selected": None,
+            "source": "NCBI Taxonomy, GBIF vernacular, Wikidata",
+            "source_notes": [str(exc)],
+            "error": str(exc),
+        }
 
 
 @router.post("/research/approve")

@@ -102,7 +102,7 @@
             <button type="button" class="ghost" id="add-ingredient">Add empty row</button>
           </div>
         </div>
-        <p class="hint">Free text is the primary ingredient input. NCBI Taxonomy suggestions search scientific names, common names, and synonyms. If more than one taxon matches, every scientific name and tax id is listed and none is selected for you. A suggestion is not approval. Research, then approve. Approve keeps the result on this formulation.</p>
+        <p class="hint">Free text is the primary ingredient input. Suggestions come from live NCBI Taxonomy, GBIF vernacular names, and Wikidata (English, Hindi, Sanskrit, and Telugu). Each row shows the scientific name, tax id, and which source suggested it. If more than one taxon matches, every match is listed and none is selected for you. A suggestion is not approval. Research, then approve. Approve keeps the result on this formulation.</p>
         <div class="picker">
           <label class="field">
             Live species search
@@ -151,7 +151,7 @@
       </div>
 
       <div id="review-panel" role="tabpanel" aria-labelledby="tab-review" hidden>
-        <p class="hint">Research runs live NCBI and PubChem lookups. Approval is kept on this draft only. It is not written to an ingredient list. NCBI Taxonomy powers the Compose suggestions.</p>
+        <p class="hint">Research runs live NCBI and PubChem lookups. Approval is kept on this draft only. It is not written to an ingredient list. Compose suggestions also ask GBIF and Wikidata for common names, then confirm each binomial on NCBI.</p>
         <div class="field-grid">
           <label class="field">
             Species or common name

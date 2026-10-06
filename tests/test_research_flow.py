@@ -6,6 +6,8 @@ Network clients are fakes. Nothing is written to an ingredient list.
 from __future__ import annotations
 
 import importlib
+import json
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -14,7 +16,8 @@ from fastapi.testclient import TestClient
 from herbenzo.api import app
 from herbenzo.clients.llm import LlmClient
 from herbenzo.services.gemini_research import ResearchFrontDoor
-from herbenzo.services.records import ResearchError
+from herbenzo.services.name_sources import NameSources
+from herbenzo.services.records import ResearchError, provenance_from_approvals
 from herbenzo.services.research import ResearchService
 
 _RETRIEVED = "2026-10-06T00:00:00+00:00"
@@ -336,7 +339,47 @@ _CENTROSEMA_XML = """<?xml version="1.0" ?>
 """
 
 
-class _ButterflyNames:
+_CONVOLVULUS_XML = """<?xml version="1.0" ?>
+<TaxaSet><Taxon>
+  <TaxId>267599</TaxId>
+  <ScientificName>Convolvulus prostratus</ScientificName>
+  <Rank>species</Rank>
+</Taxon></TaxaSet>
+"""
+_EVOLVULUS_XML = """<?xml version="1.0" ?>
+<TaxaSet><Taxon>
+  <TaxId>28506</TaxId>
+  <ScientificName>Evolvulus alsinoides</ScientificName>
+  <Rank>species</Rank>
+</Taxon></TaxaSet>
+"""
+_GENUS_XML = """<?xml version="1.0" ?>
+<TaxaSet><Taxon>
+  <TaxId>4122</TaxId>
+  <ScientificName>Convolvulus</ScientificName>
+  <Rank>genus</Rank>
+</Taxon></TaxaSet>
+"""
+_RANKUS_XML = """<?xml version="1.0" ?>
+<TaxaSet><Taxon>
+  <TaxId>888001</TaxId>
+  <ScientificName>Rankus genusii</ScientificName>
+  <Rank>genus</Rank>
+</Taxon></TaxaSet>
+"""
+_TAXON_XML = {
+    "43366": _CLITORIA_XML,
+    "1300970": _CENTROSEMA_XML,
+    "267599": _CONVOLVULUS_XML,
+    "28506": _EVOLVULUS_XML,
+    "4122": _GENUS_XML,
+    "888001": _RANKUS_XML,
+}
+
+
+class _NameEutils:
+    """NCBI fake. 'butterfly pea' is filed only under Centrosema molle."""
+
     def __init__(self) -> None:
         self.calls: list[tuple] = []
 
@@ -344,28 +387,104 @@ class _ButterflyNames:
         self.calls.append((db, term, sort))
         ids: list[str] = []
         folded = term.casefold()
-        if db == "taxonomy" and "butterfly pea" in folded:
-            if "[common name]" in folded:
-                ids = ["1300970", "43366"]
-            elif "[synonym]" in folded:
-                ids = ["43366"]
+        if db == "pubmed":
+            ids = list(_PMIDS)
+        elif db == "taxonomy":
+            ids = self._taxonomy_ids(folded)
         return {"db": db, "term": term, "count": len(ids), "ids": ids[:retmax], "retrieved_at": _RETRIEVED}
 
+    def _taxonomy_ids(self, folded: str) -> list[str]:
+        if "butterfly pea" in folded and "[common name]" in folded:
+            return ["1300970"]
+        if "shankhpushpi" in folded:
+            return []
+        if "clitoria ternatea" in folded:
+            return ["43366"]
+        if "centrosema molle" in folded:
+            return ["1300970"]
+        if "convolvulus prostratus" in folded:
+            return ["267599"]
+        if "evolvulus alsinoides" in folded:
+            return ["28506"]
+        if "rankus genusii" in folded:
+            return ["888001"]
+        if "notareal plantii" in folded or "aulonocara" in folded or "fakus missingii" in folded:
+            return []
+        return []
+
     def summary(self, db: str, ids: list[str]) -> dict:
-        return {"db": db, "records": [], "retrieved_at": _RETRIEVED}
+        records = []
+        if db == "pubmed":
+            records = [{"uid": pmid, "title": _TITLES[pmid], "pubdate": "2015"} for pmid in ids if pmid in _TITLES]
+        return {"db": db, "records": records, "retrieved_at": _RETRIEVED}
 
     def fetch_text(self, db: str, ids: list[str], *, retmode: str = "xml", rettype: str | None = None) -> tuple[str, str]:
-        tax_id = str(ids[0]) if ids else ""
-        if tax_id == "43366":
-            return _CLITORIA_XML, _RETRIEVED
-        if tax_id == "1300970":
-            return _CENTROSEMA_XML, _RETRIEVED
+        if db == "taxonomy":
+            tax_id = str(ids[0]) if ids else ""
+            return _TAXON_XML.get(tax_id, ""), _RETRIEVED
         return "", _RETRIEVED
 
 
+def _clitoria_entity() -> dict:
+    return {
+        "labels": {"en": {"value": "Clitoria ternatea"}},
+        "aliases": {"en": [{"value": "butterfly pea"}]},
+        "claims": {
+            "P225": [{"mainsnak": {"datavalue": {"value": "Clitoria ternatea"}}}],
+            "P685": [{"mainsnak": {"datavalue": {"value": "43366"}}}],
+            "P1843": [{"mainsnak": {"datavalue": {"value": {"text": "butterfly pea", "language": "en"}}}}],
+        },
+    }
+
+
+def _gbif_row(canonical: str, vernacular: str, *, rank: str = "SPECIES") -> dict:
+    return {
+        "canonicalName": canonical,
+        "scientificName": f"{canonical} L.",
+        "rank": rank,
+        "taxonomicStatus": "ACCEPTED",
+        "synonym": False,
+        "vernacularNames": [{"vernacularName": vernacular, "language": "eng"}],
+    }
+
+
+class _ScriptedNames:
+    def __init__(self, handler) -> None:
+        self.handler = handler
+        self.urls: list[str] = []
+
+    def __call__(self, url: str, headers: dict, timeout: float) -> tuple[int, bytes]:
+        self.urls.append(url)
+        return self.handler(url)
+
+
+def _names_for(handler) -> NameSources:
+    return NameSources(transport=_ScriptedNames(handler), llm=LlmClient(api_key=None), min_interval_s=0, timeout_s=2)
+
+
+def _butterfly_transport(url: str) -> tuple[int, bytes]:
+    decoded = url.casefold()
+    if "api.gbif.org" in decoded:
+        body = {"results": [_gbif_row("Clitoria ternatea", "Butterfly Pea")]}
+        return 200, json.dumps(body).encode()
+    if "wbsearchentities" in decoded:
+        return 200, json.dumps({"search": [{"id": "Q312265", "label": "Clitoria ternatea", "description": "species of plant"}]}).encode()
+    if "wbgetentities" in decoded:
+        return 200, json.dumps({"entities": {"Q312265": _clitoria_entity()}}).encode()
+    if "query.wikidata.org" in decoded:
+        return 200, json.dumps({"results": {"bindings": []}}).encode()
+    raise AssertionError(url)
+
+
 def test_butterfly_pea_suggests_every_taxon_and_picks_none():
-    eutils = _ButterflyNames()
-    service = ResearchService(eutils=eutils, pubchem=ClitoriaPubChem(), chemclass=QuietChem(), llm=LlmClient(api_key=None))
+    eutils = _NameEutils()
+    service = ResearchService(
+        eutils=eutils,
+        pubchem=ClitoriaPubChem(),
+        chemclass=QuietChem(),
+        llm=LlmClient(api_key=None),
+        names=_names_for(_butterfly_transport),
+    )
     found = service.suggest("butterfly pea")
     assert found["auto_selected"] is None
     assert found["ambiguous"] is True
@@ -373,12 +492,214 @@ def test_butterfly_pea_suggests_every_taxon_and_picks_none():
     assert set(by_id) == {43366, 1300970}
     assert by_id[43366]["scientific_name"] == "Clitoria ternatea"
     assert by_id[1300970]["scientific_name"] == "Centrosema molle"
-    assert "Common Name" in by_id[43366]["matched_fields"] or "Synonym" in by_id[43366]["matched_fields"]
+    assert "GBIF vernacular" in by_id[43366]["sources"]
+    assert "Wikidata" in by_id[43366]["sources"]
+    assert "NCBI common name" not in by_id[43366]["sources"]
+    assert "NCBI common name" in by_id[1300970]["sources"]
     fields = [call[1] for call in eutils.calls if call[0] == "taxonomy"]
     assert any("[Scientific Name]" in term for term in fields)
     assert any("[Common Name]" in term for term in fields)
     assert any("[Synonym]" in term for term in fields)
     assert found["suggestions"][0]["tax_id"] != found.get("auto_selected")
+    ui = Path("herbenzo/static/app.js").read_text(encoding="utf-8")
+    assert "name_sources" in ui
+    assert "Searching NCBI, GBIF, and Wikidata" in ui
+    candidate = service.research(
+        "Clitoria ternatea",
+        name_sources=by_id[43366]["sources"],
+        name_query="butterfly pea",
+    )
+    approved = service.approve(candidate)
+    assert approved["status"] == "approved"
+    assert approved["ingredient_id"] == "tax-43366"
+    assert approved["name_match"]["query"] == "butterfly pea"
+    assert "GBIF vernacular" in approved["name_match"]["sources"]
+    assert "Wikidata" in approved["name_match"]["sources"]
+    provenance = provenance_from_approvals([approved])
+    assert provenance["ingredients"][0]["name_match"]["sources"] == approved["name_match"]["sources"]
+    assert provenance["ingredients"][0]["name_match"]["tax_id"] == 43366
+
+
+def _shankh_transport(url: str) -> tuple[int, bytes]:
+    decoded = url.casefold()
+    if "api.gbif.org" in decoded:
+        body = {
+            "results": [
+                _gbif_row("Convolvulus prostratus", "Shankhpushpi"),
+                _gbif_row("Evolvulus alsinoides", "Shankhpushpi"),
+                _gbif_row("Convolvulus", "Shankhpushpi", rank="GENUS"),
+            ]
+        }
+        return 200, json.dumps(body).encode()
+    if "wbsearchentities" in decoded:
+        return 200, json.dumps(
+            {
+                "search": [
+                    {"id": "Q16552588", "label": "Convolvulus prostratus", "description": "species of plant"},
+                    {"id": "Q312265", "label": "Clitoria ternatea", "description": "species of plant"},
+                    {"id": "Q147507", "label": "Convolvulus", "description": "genus of plants"},
+                ]
+            }
+        ).encode()
+    if "wbgetentities" in decoded:
+        entities = {
+            "Q16552588": {
+                "labels": {"en": {"value": "Convolvulus prostratus"}, "hi": {"value": "शंखपुष्पी"}},
+                "aliases": {"en": [{"value": "Shankhpushpi"}]},
+                "claims": {
+                    "P225": [{"mainsnak": {"datavalue": {"value": "Convolvulus prostratus"}}}],
+                    "P685": [{"mainsnak": {"datavalue": {"value": "267599"}}}],
+                },
+            },
+            "Q312265": {
+                "labels": {"en": {"value": "Clitoria ternatea"}, "sa": {"value": "शंखपुष्पी"}},
+                "aliases": {"en": [{"value": "Shankhpushpi"}]},
+                "claims": {
+                    "P225": [{"mainsnak": {"datavalue": {"value": "Clitoria ternatea"}}}],
+                    "P685": [{"mainsnak": {"datavalue": {"value": "43366"}}}],
+                },
+            },
+            "Q147507": {
+                "labels": {"hi": {"value": "शंखपुष्पी"}, "en": {"value": "Convolvulus"}},
+                "claims": {
+                    "P225": [{"mainsnak": {"datavalue": {"value": "Convolvulus"}}}],
+                    "P685": [{"mainsnak": {"datavalue": {"value": "4122"}}}],
+                },
+            },
+        }
+        return 200, json.dumps({"entities": entities}).encode()
+    if "query.wikidata.org" in decoded:
+        return 200, json.dumps({"results": {"bindings": []}}).encode()
+    raise AssertionError(url)
+
+
+def test_shankhpushpi_lists_every_species_and_picks_none():
+    service = ResearchService(
+        eutils=_NameEutils(),
+        pubchem=ClitoriaPubChem(),
+        chemclass=QuietChem(),
+        llm=LlmClient(api_key=None),
+        names=_names_for(_shankh_transport),
+    )
+    found = service.suggest("Shankhpushpi")
+    assert found["auto_selected"] is None
+    assert found["ambiguous"] is True
+    by_id = {row["tax_id"]: row for row in found["suggestions"]}
+    assert set(by_id) == {267599, 28506, 43366}
+    assert by_id[267599]["scientific_name"] == "Convolvulus prostratus"
+    assert by_id[28506]["scientific_name"] == "Evolvulus alsinoides"
+    assert by_id[43366]["scientific_name"] == "Clitoria ternatea"
+    assert all(row["rank"] == "species" for row in found["suggestions"])
+    assert "Convolvulus" not in {row["scientific_name"] for row in found["suggestions"]}
+
+
+def test_name_source_outage_keeps_the_other_results():
+    def transport(url: str) -> tuple[int, bytes]:
+        if "api.gbif.org" in url.casefold():
+            raise urllib.error.URLError("gbif down")
+        return _butterfly_transport(url)
+
+    service = ResearchService(
+        eutils=_NameEutils(),
+        pubchem=ClitoriaPubChem(),
+        chemclass=QuietChem(),
+        llm=LlmClient(api_key=None),
+        names=_names_for(transport),
+    )
+    found = service.suggest("butterfly pea")
+    by_id = {row["tax_id"]: row for row in found["suggestions"]}
+    assert 1300970 in by_id
+    assert 43366 in by_id
+    assert "Wikidata" in by_id[43366]["sources"]
+    assert found["auto_selected"] is None
+    assert any("GBIF" in note for note in found["source_notes"])
+
+
+def test_non_species_and_unreconcilable_names_are_dropped():
+    def transport(url: str) -> tuple[int, bytes]:
+        decoded = url.casefold()
+        if "api.gbif.org" in decoded:
+            body = {
+                "results": [
+                    _gbif_row("Notareal plantii", "butterfly pea"),
+                    _gbif_row("Rankus genusii", "butterfly pea"),
+                    _gbif_row("Aulonocara jacobfreibergi", "butterfly peacock bass"),
+                    _gbif_row("Clitoria ternatea", "Butterfly Pea"),
+                ]
+            }
+            return 200, json.dumps(body).encode()
+        if "wbsearchentities" in decoded:
+            return 200, json.dumps({"search": [{"id": "Q147507"}]}).encode()
+        if "wbgetentities" in decoded:
+            genus = {
+                "labels": {"en": {"value": "Convolvulus"}},
+                "aliases": {"en": [{"value": "butterfly pea"}]},
+                "claims": {
+                    "P225": [{"mainsnak": {"datavalue": {"value": "Convolvulus"}}}],
+                    "P685": [{"mainsnak": {"datavalue": {"value": "4122"}}}],
+                },
+            }
+            return 200, json.dumps({"entities": {"Q147507": genus}}).encode()
+        if "query.wikidata.org" in decoded:
+            return 200, json.dumps({"results": {"bindings": []}}).encode()
+        raise AssertionError(url)
+
+    eutils = _NameEutils()
+    service = ResearchService(
+        eutils=eutils,
+        pubchem=ClitoriaPubChem(),
+        chemclass=QuietChem(),
+        llm=LlmClient(api_key=None),
+        names=_names_for(transport),
+    )
+    found = service.suggest("butterfly pea")
+    names = {row["scientific_name"] for row in found["suggestions"]}
+    assert "Clitoria ternatea" in names
+    assert "Centrosema molle" in names
+    assert "Notareal plantii" not in names
+    assert "Rankus genusii" not in names
+    assert "Aulonocara jacobfreibergi" not in names
+    assert "Convolvulus" not in names
+    assert all(row["rank"] == "species" for row in found["suggestions"])
+    searched = " ".join(call[1] for call in eutils.calls if call[0] == "taxonomy")
+    assert "Aulonocara" not in searched
+    assert "Convolvulus[" not in searched
+
+
+def test_gemini_binomials_are_kept_only_after_ncbi_species_confirmation():
+    def http(url: str, headers: dict, timeout: float) -> tuple[int, bytes]:
+        if "chat/completions" in url:
+            body = json.dumps(
+                {"choices": [{"message": {"content": json.dumps({"binomials": ["Evolvulus alsinoides", "not-a-binomial", "Fakus missingii"]})}}]}
+            ).encode()
+            return 200, body
+        if "api.gbif.org" in url or "wikidata.org" in url or "query.wikidata.org" in url:
+            if "wbsearchentities" in url:
+                return 200, b'{"search":[]}'
+            if "species/search" in url:
+                return 200, b'{"results":[]}'
+            return 200, b'{"results":{"bindings":[]}}'
+        raise AssertionError(url)
+
+    def post(url: str, body: bytes, headers: dict, timeout: float) -> tuple[int, bytes]:
+        return http(url, headers, timeout)
+
+    llm = LlmClient(api_key="test-key", base_url="https://llm.example/v1", model="gemini-2.5-flash", transport=post)
+    names = NameSources(transport=http, llm=llm, min_interval_s=0, timeout_s=2)
+    service = ResearchService(
+        eutils=_NameEutils(),
+        pubchem=ClitoriaPubChem(),
+        chemclass=QuietChem(),
+        llm=llm,
+        names=names,
+    )
+    found = service.suggest("Shankhpushpi")
+    by_id = {row["tax_id"]: row for row in found["suggestions"]}
+    assert set(by_id) == {28506}
+    assert by_id[28506]["scientific_name"] == "Evolvulus alsinoides"
+    assert by_id[28506]["sources"] == ["Gemini web research"]
+    assert found["auto_selected"] is None
+    assert "Fakus missingii" not in {row["scientific_name"] for row in found["suggestions"]}
 
 
 def test_suggest_is_live_and_empty_on_failure(monkeypatch: pytest.MonkeyPatch):

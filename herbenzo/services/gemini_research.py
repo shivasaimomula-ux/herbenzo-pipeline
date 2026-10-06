@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 from herbenzo.config import get_settings
 from herbenzo.services.llm_config import validate_llm_settings
-from herbenzo.services.research import ResearchService, _now
+from herbenzo.services.research import ResearchService, apply_name_match, _now
 from herbenzo.services.research_extract import strip_unverified_citations
 from herbenzo.services.enrich_parse import strip_llm_numerics
 
@@ -77,7 +77,16 @@ class ResearchFrontDoor:
         self.timeout_s = settings.research_timeout_s if timeout_s is None else float(timeout_s)
         self.rounds = 0
 
-    def research(self, query: str, *, part_used: str | None = None, max_markers: int = 8, max_pmids: int = 5) -> dict[str, Any]:
+    def research(
+        self,
+        query: str,
+        *,
+        part_used: str | None = None,
+        max_markers: int = 8,
+        max_pmids: int = 5,
+        name_sources: list[str] | None = None,
+        name_query: str | None = None,
+    ) -> dict[str, Any]:
         settings = get_settings()
         llm = self.service.llm
         verdict = validate_llm_settings(
@@ -85,19 +94,27 @@ class ResearchFrontDoor:
             base_url=getattr(llm, "base_url", None) or settings.llm_base_url,
             model=getattr(llm, "model", None) or settings.llm_model,
         )
+        kwargs = {
+            "part_used": part_used,
+            "max_markers": max_markers,
+            "max_pmids": max_pmids,
+            "name_sources": name_sources,
+            "name_query": name_query,
+        }
         if verdict["status"] != "ok":
-            doc = self.service.research(query, part_used=part_used, max_markers=max_markers, max_pmids=max_pmids)
+            doc = self.service.research(query, **kwargs)
             doc["research_path"] = "deterministic" if verdict["status"] == "unconfigured" else "deterministic_fallback"
             doc["llm_config"] = verdict
             return doc
         try:
-            return self._gemini(query, part_used=part_used, max_markers=max_markers, max_pmids=max_pmids)
+            doc = self._gemini(query, part_used=part_used, max_markers=max_markers, max_pmids=max_pmids)
         except Exception as exc:
-            doc = self.service.research(query, part_used=part_used, max_markers=max_markers, max_pmids=max_pmids)
+            doc = self.service.research(query, **kwargs)
             doc["research_path"] = "deterministic_fallback"
             doc["llm_error"] = str(exc)
             doc["llm_config"] = verdict
             return doc
+        return apply_name_match(doc, name_sources=name_sources, name_query=name_query)
 
     def _gemini(self, query: str, *, part_used: str | None, max_markers: int, max_pmids: int) -> dict[str, Any]:
         self.rounds = 0

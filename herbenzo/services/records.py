@@ -215,6 +215,7 @@ def provenance_from_approvals(approvals: list[dict[str, Any]]) -> dict[str, Any]
                 "marker_status": ingredient.get("marker_status") or doc.get("marker_status"),
                 "pubchem": pubchem_rows,
                 "decision": doc.get("status"),
+                "name_match": doc.get("name_match") if isinstance(doc.get("name_match"), dict) else None,
             }
         )
     return {
