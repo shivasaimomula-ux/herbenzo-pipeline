@@ -40,8 +40,8 @@ Open `http://127.0.0.1:8003/`.
 Free text is the primary ingredient input. On top of that field, a dropdown queries live NCBI Taxonomy. It is a suggestion helper, not a stored list and not an approval.
 
 1. Set formulation id, product name, finished form, market, servings, and confidence.
-2. Type a scientific or common name. After two characters the field waits about 300 ms, shows “Searching NCBI Taxonomy…”, and calls `GET /research/suggest?q=`. Picking a row only fills the scientific name. An empty or failed taxonomy search returns HTTP 200 with `suggestions: []`.
-3. **Research** posts `POST /research`. **Approve** posts that candidate to `POST /research/approve`. The browser keeps the approval in memory (`window.herbenzoApproved`) and in the draft file if you save.
+2. Type a scientific or common name. After two characters the field waits about 300 ms, shows “Searching NCBI Taxonomy…”, and calls `GET /research/suggest?q=`. The search covers scientific names, common names, and synonyms. Every matching taxon is listed with its scientific name and tax id. A common name is not reduced to the first hit, and nothing is selected until you click a row. An empty or failed taxonomy search returns HTTP 200 with `suggestions: []`.
+3. **Research** posts `POST /research` for the scientific name in the field. **Approve** posts `{ "candidate": ... }` to `POST /research/approve`. That approval stays on this formulation (`window.herbenzoApproved`) and in the draft file if you save. It is the document modernize uses.
 4. **Run Modernize** posts `{ "spec": FormulationSpec, "approvals": [...] }`. A bare FormulationSpec with no approvals returns **422** `not_approved`.
 
 **Load ashwagandha** prefills `Withania somnifera`. **Load Triphala** prefills `Terminalia chebula`. Neither injects an approved row. You still research and approve.
@@ -93,7 +93,7 @@ Delphinidin 3-glucoside (443650), rutin (5280805), and taraxerol (92097) occur i
 
 `/modernize` itself does not look up PubChem. A `marker_overrides` entry that is only a name, without a verified PubChem block (`pubchem_cid`, molecular weight, TPSA, HBD, HBA, rotatable bonds), returns `marker_unverified` and tells the caller to use `POST /research/marker` first. XLogP on that block is optional.
 
-An approved ingredient with no marker is not a failure. `/modernize` still runs. Any approved ingredient with an empty marker list sets `classical_active_marker_gap` beside the SKU (the code name is unchanged; it is no longer limited to classical dosage forms). When no ingredient has a marker, the body is `{ "sku": null, "classical_active_marker_gap": ..., "research_provenance": ... }`. Mixed formulas modernize the marker-backed ingredients and flag the rest.
+An approved ingredient with no marker is not a failure. `/modernize` still runs. Any approved ingredient with an empty marker list sets `classical_active_marker_gap` beside the SKU (the code name is unchanged; it is no longer limited to classical dosage forms). When no ingredient has a marker, `sku` stays null. The gap says the marker is pending and how to add one: `POST /research/marker` with this approval and a specific `marker_name`, then modernize again. Mixed formulas modernize the marker-backed ingredients and flag the rest.
 
 `/suggest-formats` accepts marker-less approvals. Their solubility is `unknown`. Solubilizing formats are penalized only when every profile has solubility `high`.
 
@@ -134,6 +134,9 @@ Tests, all mocked, no live network:
 - `test_withania_is_researched_not_loaded_from_stock`
 - `test_suggest_is_live_and_empty_on_failure`
 - `test_unapproved_research_does_not_modernize`
+- `test_compose_approve_posts_the_candidate_and_modernizes_it`
+- `test_butterfly_pea_suggests_every_taxon_and_picks_none`
+- `test_gemini_loop_cap_and_fallback`
 
 ## Trade-offs
 

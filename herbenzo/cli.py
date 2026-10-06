@@ -76,6 +76,8 @@ def _cmd_run(args) -> int:
     print(f"  citations      : {report['citation_summary']}")
     if gap:
         print("  indicator      : classical_active_marker_gap (advisory, does not block)")
+        if gap.get("message"):
+            print(f"                   {gap['message']}")
         for item in gap.get("ingredients") or []:
             print(f"                   - {item['ingredient_id']}: {item['reason']}")
     if report["declared_gaps"]:

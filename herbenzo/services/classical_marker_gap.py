@@ -58,13 +58,25 @@ CLASSICAL_PREPARATION_FORMS: tuple[str, ...] = (
 _FORM_SET = frozenset(CLASSICAL_PREPARATION_FORMS)
 _TOKEN = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 
-_GAP_REASON = "no standardization marker on this approved ingredient"
+_GAP_REASON = "marker pending: no PubChem standardization marker on this approved ingredient"
 
-_MESSAGE = (
-    "An approved ingredient has no PubChem standardization marker. "
-    "Indicator only: marker-backed ingredients are still modernized, and this "
-    "is not a confidence-floor violation. Add a marker before a chemistry-backed "
-    "SKU is required for this ingredient."
+_HOW_TO_ADD = (
+    "Add one by adjudication: POST /research/marker with this request's approval "
+    "and marker_name set to a specific compound (for Clitoria ternatea, Ternatin A1 or clitorin). "
+    "Then POST /modernize again with that updated approval. A name alone is not enough."
+)
+
+_MESSAGE_NO_SKU = (
+    "No ModernizedSKU because the marker is pending. "
+    "This approved ingredient has no PubChem standardization marker, so no chemistry-backed SKU was built. "
+    "The indicator does not change the confidence floor. "
+    + _HOW_TO_ADD
+)
+
+_MESSAGE_PARTIAL = (
+    "Marker pending on some approved ingredients, so those ingredients were left out of the SKU. "
+    "Marker-backed ingredients were still modernized. The indicator does not change the confidence floor. "
+    + _HOW_TO_ADD
 )
 
 
@@ -111,22 +123,31 @@ def classical_active_marker_gap(
             {
                 "ingredient_id": ing.ingredient_id,
                 "botanical_name": ing.botanical_name,
+                "marker_status": "pending",
                 "reason": _GAP_REASON,
             }
         )
     if not gaps:
         return None
 
+    all_pending = len(gaps) == len(spec.ingredients)
     return {
         "code": INDICATOR_CODE,
         "present": True,
         "advisory_only": True,
         "blocking": False,
         "affects_confidence_floor": False,
+        "marker_status": "pending",
         "matched_forms": list(forms),
         "formulation_id": spec.formulation_id,
         "product_name": spec.product_name,
         "dosage_form": spec.dosage_form,
-        "message": _MESSAGE,
+        "message": _MESSAGE_NO_SKU if all_pending else _MESSAGE_PARTIAL,
+        "how_to_add_marker": {
+            "method": "POST",
+            "path": "/research/marker",
+            "fields": ["approval", "marker_name"],
+            "note": _HOW_TO_ADD,
+        },
         "ingredients": gaps,
     }

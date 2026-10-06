@@ -259,7 +259,12 @@ def test_clitoria_pending_marker_modernizes_with_provenance_and_gap():
     assert pending.status_code == 200, pending.text
     body = pending.json()
     assert body["sku"] is None
-    assert body["classical_active_marker_gap"]["blocking"] is False
+    gap = body["classical_active_marker_gap"]
+    assert gap["blocking"] is False
+    assert gap["marker_status"] == "pending"
+    assert "marker is pending" in gap["message"]
+    assert "/research/marker" in gap["message"]
+    assert gap["how_to_add_marker"]["path"] == "/research/marker"
     provenance = body["research_provenance"]["ingredients"][0]
     assert provenance["taxonomy_id"] == 43366
     assert "26120869" in provenance["pmids"]
@@ -291,6 +296,89 @@ def test_withania_is_researched_not_loaded_from_stock():
     assert doc["ingredient_id"] == "tax-126636"
     assert doc["ingredient_id"] != "HB-ASHW"
     assert any(call[0] == "taxonomy" for call in eutils.calls)
+
+
+def test_compose_approve_posts_the_candidate_and_modernizes_it():
+    """The Compose Approve button posts {candidate} and modernize uses that document."""
+    service, _eutils, _pubchem = _clitoria_service()
+    candidate = service.research("Clitoria ternatea")
+    client = TestClient(app)
+    approved = client.post("/research/approve", json={"candidate": candidate})
+    assert approved.status_code == 200, approved.text
+    approval = approved.json()
+    assert approval["status"] == "approved"
+    assert approval["ingredient_id"] == "tax-43366"
+    assert approval["marker_status"] == "pending"
+    ui = Path("herbenzo/static/app.js").read_text(encoding="utf-8")
+    assert "candidate: lastCandidate" in ui
+    assert "not stored in an ingredient list" not in ui
+    assert "Nothing is selected for you" in ui
+    modernized = client.post(
+        "/modernize",
+        json={"spec": _spec(approval["ingredient_id"], "Clitoria ternatea"), "approvals": [approval]},
+    )
+    assert modernized.status_code == 200, modernized.text
+    body = modernized.json()
+    assert body["sku"] is None
+    assert "marker is pending" in body["classical_active_marker_gap"]["message"]
+    assert body["classical_active_marker_gap"]["how_to_add_marker"]["method"] == "POST"
+    again = client.post("/research/approve", json={"candidate": candidate})
+    assert again.status_code == 200
+
+
+_CENTROSEMA_XML = """<?xml version="1.0" ?>
+<TaxaSet><Taxon>
+  <TaxId>1300970</TaxId>
+  <ScientificName>Centrosema molle</ScientificName>
+  <Rank>species</Rank>
+  <OtherNames><CommonName>butterfly pea</CommonName></OtherNames>
+</Taxon></TaxaSet>
+"""
+
+
+class _ButterflyNames:
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def search(self, db: str, term: str, *, retmax: int = 5, sort: str | None = None) -> dict:
+        self.calls.append((db, term, sort))
+        ids: list[str] = []
+        folded = term.casefold()
+        if db == "taxonomy" and "butterfly pea" in folded:
+            if "[common name]" in folded:
+                ids = ["1300970", "43366"]
+            elif "[synonym]" in folded:
+                ids = ["43366"]
+        return {"db": db, "term": term, "count": len(ids), "ids": ids[:retmax], "retrieved_at": _RETRIEVED}
+
+    def summary(self, db: str, ids: list[str]) -> dict:
+        return {"db": db, "records": [], "retrieved_at": _RETRIEVED}
+
+    def fetch_text(self, db: str, ids: list[str], *, retmode: str = "xml", rettype: str | None = None) -> tuple[str, str]:
+        tax_id = str(ids[0]) if ids else ""
+        if tax_id == "43366":
+            return _CLITORIA_XML, _RETRIEVED
+        if tax_id == "1300970":
+            return _CENTROSEMA_XML, _RETRIEVED
+        return "", _RETRIEVED
+
+
+def test_butterfly_pea_suggests_every_taxon_and_picks_none():
+    eutils = _ButterflyNames()
+    service = ResearchService(eutils=eutils, pubchem=ClitoriaPubChem(), chemclass=QuietChem(), llm=LlmClient(api_key=None))
+    found = service.suggest("butterfly pea")
+    assert found["auto_selected"] is None
+    assert found["ambiguous"] is True
+    by_id = {row["tax_id"]: row for row in found["suggestions"]}
+    assert set(by_id) == {43366, 1300970}
+    assert by_id[43366]["scientific_name"] == "Clitoria ternatea"
+    assert by_id[1300970]["scientific_name"] == "Centrosema molle"
+    assert "Common Name" in by_id[43366]["matched_fields"] or "Synonym" in by_id[43366]["matched_fields"]
+    fields = [call[1] for call in eutils.calls if call[0] == "taxonomy"]
+    assert any("[Scientific Name]" in term for term in fields)
+    assert any("[Common Name]" in term for term in fields)
+    assert any("[Synonym]" in term for term in fields)
+    assert found["suggestions"][0]["tax_id"] != found.get("auto_selected")
 
 
 def test_suggest_is_live_and_empty_on_failure(monkeypatch: pytest.MonkeyPatch):

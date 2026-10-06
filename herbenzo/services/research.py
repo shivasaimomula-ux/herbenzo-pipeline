@@ -44,6 +44,20 @@ PHYSCHEM_READY = ("molecular_weight", "tpsa", "hbd", "hba", "rotatable_bonds")
 _UNII_TITLE = re.compile(r"^[A-Z0-9]{6,12}$")
 _MAX_NAME_LOOKUPS = 6
 _MAX_CID_LINKS = 8
+_TAXONOMY_NAME_FIELDS = ("Scientific Name", "Common Name", "Synonym")
+
+
+def _suggest_payload(query: str, suggestions: list[dict[str, Any]], *, error: str | None) -> dict[str, Any]:
+    exact = [row for row in suggestions if row.get("exact_scientific_match")]
+    ambiguous = len(suggestions) != 1 or not exact
+    return {
+        "query": query,
+        "suggestions": suggestions,
+        "ambiguous": ambiguous,
+        "auto_selected": None,
+        "source": "NCBI Taxonomy",
+        "error": error,
+    }
 
 
 def stored_pubmed_count(literature: dict[str, Any] | None) -> int:
@@ -161,23 +175,32 @@ class ResearchService:
         }
 
     def suggest(self, query: str) -> dict[str, Any]:
-        """Live taxonomy suggestions. Empty results stay HTTP-friendly."""
+        """Live taxonomy suggestions across scientific, common, and synonym names.
+
+        Every matching taxon is returned. Nothing is chosen for the caller.
+        """
         text = (query or "").strip()
         if len(text) < 2:
-            return {"query": text, "suggestions": [], "source": "NCBI Taxonomy", "error": None}
-        try:
-            found = self._search("taxonomy", text, retmax=8)
-            ids = list(found.get("ids") or [])
-        except Exception as exc:
-            return {
-                "query": text,
-                "suggestions": [],
-                "source": "NCBI Taxonomy",
-                "error": str(exc),
-            }
+            return _suggest_payload(text, [], error=None)
+        ids: list[str] = []
+        matched: dict[str, list[str]] = {}
+        errors: list[str] = []
+        for field in _TAXONOMY_NAME_FIELDS:
+            try:
+                found = self._search("taxonomy", f"{text}[{field}]", retmax=20)
+            except Exception as exc:
+                errors.append(str(exc))
+                continue
+            for tax_id in found.get("ids") or []:
+                key = str(tax_id)
+                if key not in matched:
+                    ids.append(key)
+                    matched[key] = []
+                if field not in matched[key]:
+                    matched[key].append(field)
         suggestions: list[dict[str, Any]] = []
         lookup_error: str | None = None
-        for tax_id in ids[:8]:
+        for tax_id in ids[:20]:
             try:
                 record = self._taxonomy_by_id(str(tax_id), query_label=text)
             except Exception as exc:
@@ -185,20 +208,20 @@ class ResearchService:
                 continue
             if not record or not record.get("scientific_name"):
                 continue
+            scientific = str(record.get("scientific_name"))
             suggestions.append(
                 {
-                    "scientific_name": record.get("scientific_name"),
+                    "scientific_name": scientific,
                     "common_names": list(record.get("common_names") or []),
+                    "synonyms": list(record.get("synonyms") or []),
                     "rank": record.get("rank"),
                     "tax_id": record.get("tax_id"),
+                    "matched_fields": list(matched.get(str(tax_id), [])),
+                    "exact_scientific_match": scientific.casefold() == text.casefold(),
                 }
             )
-        return {
-            "query": text,
-            "suggestions": suggestions,
-            "source": "NCBI Taxonomy",
-            "error": None if suggestions else lookup_error,
-        }
+        error = None if suggestions else (lookup_error or (errors[0] if errors and not ids else None))
+        return _suggest_payload(text, suggestions, error=error)
 
     def approve(
         self,

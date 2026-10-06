@@ -435,12 +435,20 @@ function renderSuggestions() {
       el.ingredientSuggest.hidden = false;
       el.ingredientSuggest.innerHTML = rows
         .map((row) => {
-          const commons = (row.common_names || []).join(", ");
+          const commons = (row.common_names || []).concat(row.synonyms || []).join(", ");
           const label = `${row.scientific_name} · ${row.rank || "rank unknown"} · tax ${row.tax_id}${commons ? " · " + commons : ""}`;
-          return `<li><button type="button" data-scientific-name="${escapeHtml(row.scientific_name)}">${escapeHtml(label)}</button></li>`;
+          return `<li><button type="button" data-scientific-name="${escapeHtml(row.scientific_name)}" data-tax-id="${escapeHtml(row.tax_id)}">${escapeHtml(label)}</button></li>`;
         })
         .join("");
-      if (status) status.textContent = "";
+      if (status) {
+        if (rows.length > 1) {
+          status.textContent = "Several taxa match. Pick a scientific name and tax id. Nothing is selected for you.";
+        } else if (body.ambiguous) {
+          status.textContent = "This name is not the scientific name. Pick the row. Nothing is selected for you.";
+        } else {
+          status.textContent = "";
+        }
+      }
     } catch (err) {
       if (serial !== suggestSerial) return;
       el.ingredientSuggest.hidden = true;
@@ -657,10 +665,26 @@ function rememberApproval(approval) {
   registry = [...registryById.values()];
 }
 
+function selectedTaxonMatches(query) {
+  if (!el.ingredientSuggest || el.ingredientSuggest.hidden) return true;
+  const buttons = [...el.ingredientSuggest.querySelectorAll("[data-scientific-name]")];
+  if (!buttons.length) return true;
+  const typed = query.trim().toLowerCase();
+  const exact = buttons.filter((button) => (button.dataset.scientificName || "").toLowerCase() === typed);
+  return exact.length === 1;
+}
+
 async function researchCurrentName() {
   const query = el.ingredientSearch.value.trim();
   if (!query) {
     setStatus("error", "Type a species or common name first.");
+    return;
+  }
+  if (!selectedTaxonMatches(query)) {
+    setStatus(
+      "error",
+      "This name matches more than one taxon, or it is not the scientific name. Pick a row in the list. Nothing is selected for you."
+    );
     return;
   }
   setStatus(null, "Researching…");
@@ -685,7 +709,7 @@ async function researchCurrentName() {
       articles.slice(0, 3).map((article) => `PMID ${article.pmid}`).join(", "),
     ].filter(Boolean).join(" ");
   }
-  setStatus("ok", "Research finished. Approve to use it on this formulation.");
+  setStatus("ok", "Research finished. Approve to hold it on this formulation.");
 }
 
 async function approveLastCandidate() {
@@ -705,8 +729,15 @@ async function approveLastCandidate() {
   }
   rememberApproval(body);
   const id = body.ingredient_id;
+  const ingredient = body.ingredient || {};
+  const name = ingredient.botanical_name || id;
   addRegistryIngredient(id);
-  setStatus("ok", `Approved ${id} for this request. It is not stored in an ingredient list.`);
+  const evidence = document.getElementById("research-evidence");
+  if (evidence) {
+    const marker = body.marker_status || "pending";
+    evidence.textContent = `Approved ${name} (${id}) for this formulation. Marker: ${marker}. Run Modernize sends this approval with the spec.`;
+  }
+  setStatus("ok", `Approved ${name} (${id}) for this formulation. Run Modernize uses this approval.`);
 }
 
 function responseSku(body) {
@@ -772,7 +803,6 @@ function summarizeAdvisory(value) {
 function renderOneAdvisory(item) {
   if (item.code === "classical_active_marker_gap" && item.value && typeof item.value === "object") {
     const gap = item.value;
-    const forms = Array.isArray(gap.matched_forms) ? gap.matched_forms.join(", ") : "";
     const lines = (Array.isArray(gap.ingredients) ? gap.ingredients : [])
       .map(
         (row) =>
@@ -781,9 +811,9 @@ function renderOneAdvisory(item) {
       .join("");
     return `
       <div class="advisory-item">
-        <strong>Advisory · classical preparation has no established active marker</strong>
-        <p>${escapeHtml(gap.message || "classical_active_marker_gap")}</p>
-        <p>Matched form: ${escapeHtml(forms || "—")}. This does not block modernization.</p>
+        <strong>Marker pending — no chemistry-backed SKU for this ingredient</strong>
+        <p>${escapeHtml(gap.message || "marker pending")}</p>
+        <p>Adjudication: POST /research/marker with this approval and a specific marker_name, then modernize again. This does not block other marker-backed ingredients.</p>
         ${lines ? `<ul>${lines}</ul>` : ""}
       </div>`;
   }
@@ -939,16 +969,17 @@ function showModernizeSuccess(body) {
   if (!sku) {
     el.resultPanel.hidden = false;
     el.resultMeta.textContent = hasAdvisory
-      ? "Advisory only — no ModernizedSKU in the response"
+      ? "No ModernizedSKU because the marker is pending"
       : "No ModernizedSKU in the response";
-    el.skuSummary.innerHTML = `<div><dt>ModernizedSKU</dt><dd>—</dd></div>`;
+    el.skuSummary.innerHTML = `<div><dt>ModernizedSKU</dt><dd>none — marker pending</dd></div>`;
     el.ingredientCards.innerHTML = "";
     el.rawJson.textContent = JSON.stringify(body, null, 2);
+    const gap = body && body.classical_active_marker_gap;
     setStatus(
       "ok",
-      hasAdvisory
-        ? "Modernize returned an advisory and no SKU. Modernization was not reported as an error."
-        : "Modernize returned no SKU."
+      gap && gap.message
+        ? gap.message
+        : "No ModernizedSKU because the marker is pending. Add one with POST /research/marker, then modernize again."
     );
     el.resultPanel.scrollIntoView({ behavior: "smooth", block: "start" });
     return;
@@ -1422,7 +1453,7 @@ async function proposeCandidate() {
   }
   lastCandidate = body;
   renderCandidateDetail(body);
-  setStatus("ok", "Research finished. Approve to use it on this formulation. It is not stored.");
+  setStatus("ok", "Research finished. Approve to hold it on this formulation.");
 }
 
 async function decideCandidate(_id, action) {
@@ -1449,7 +1480,7 @@ async function decideCandidate(_id, action) {
   rememberApproval(body);
   addRegistryIngredient(body.ingredient_id);
   renderCandidateDetail(body);
-  setStatus("ok", `Approved ${body.ingredient_id} for this request. It is not stored in an ingredient list.`);
+  setStatus("ok", `Approved ${(body.ingredient && body.ingredient.botanical_name) || body.ingredient_id} (${body.ingredient_id}) for this formulation. Run Modernize uses this approval.`);
 }
 
 async function boot() {
