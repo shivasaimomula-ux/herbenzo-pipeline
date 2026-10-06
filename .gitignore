@@ -17,6 +17,9 @@ cache/
 
 # Stage B compose drafts (local demo files; created on save)
 herbenzo/data/compose_drafts/
+
+# Approved registry overlay and pending enrichment candidates
+herbenzo/data/registry_overlay/
 * 2.py
 * 2.*
 .DS_Store
