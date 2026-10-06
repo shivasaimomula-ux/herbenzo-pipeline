@@ -8,6 +8,8 @@
     python -m herbenzo.cli enrich propose "Bacopa monnieri"
     python -m herbenzo.cli enrich list
     python -m herbenzo.cli enrich approve c0123456789abcdef
+    python -m herbenzo.cli suggest-formats HB-ASHW HB-AMLA --dosage-form avaleha \\
+        --product-name Chyawanprash --audience adults
 """
 
 from __future__ import annotations
@@ -77,6 +79,49 @@ def _cmd_adjudicate(args) -> int:
     )
     print(json.dumps(a.as_dict(), indent=2))
     return 0 if a.verdict != "reject" else 1
+
+
+def _parse_quantity(raw: str) -> tuple[str, float]:
+    if "=" not in raw:
+        raise ValueError(f"quantity must look like HB-ASHW=500, not {raw!r}")
+    ingredient_id, amount = raw.split("=", 1)
+    ingredient_id = ingredient_id.strip()
+    if not ingredient_id:
+        raise ValueError(f"quantity must look like HB-ASHW=500, not {raw!r}")
+    try:
+        quantity = float(amount)
+    except ValueError as exc:
+        raise ValueError(f"quantity must look like HB-ASHW=500, not {raw!r}") from exc
+    if quantity <= 0:
+        raise ValueError(f"quantity must be greater than 0, not {raw!r}")
+    return ingredient_id, quantity
+
+
+def _cmd_suggest_formats(args) -> int:
+    """Advisory format ranking. Does not run the modernizer."""
+    from herbenzo.format_suggestions import suggest_formats
+    from herbenzo.services.registries import UnknownIngredient, UnknownMarker
+
+    quantities: dict[str, float] = {}
+    try:
+        for raw in args.quantity or []:
+            ingredient_id, quantity = _parse_quantity(raw)
+            quantities[ingredient_id] = quantity
+        result = suggest_formats(
+            list(args.ingredient_ids),
+            audience=args.audience,
+            dosage_form=args.dosage_form,
+            product_name=args.product_name,
+            quantities_mg=quantities,
+        )
+    except (UnknownIngredient, UnknownMarker) as exc:
+        print(f"unknown_ingredient: {exc}", file=sys.stderr)
+        return 2
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(json.dumps(result, indent=2))
+    return 0
 
 
 def _cmd_markers(args) -> int:
@@ -219,6 +264,23 @@ def main(argv: list[str] | None = None) -> int:
     reject.add_argument("candidate_id")
     reject.add_argument("--reason", default="")
     reject.set_defaults(func=_cmd_enrich_reject)
+
+    s = sub.add_parser(
+        "suggest-formats",
+        help="rank advisory finished formats for one or more ingredient ids",
+    )
+    s.add_argument("ingredient_ids", nargs="+", metavar="INGREDIENT_ID")
+    s.add_argument("--audience", choices=["kids", "teens", "adults", "elderly"])
+    s.add_argument("--dosage-form", default=None)
+    s.add_argument("--product-name", default=None)
+    s.add_argument(
+        "--quantity",
+        action="append",
+        default=[],
+        metavar="ID=MG",
+        help="optional milligrams per serving, repeatable (HB-ASHW=500)",
+    )
+    s.set_defaults(func=_cmd_suggest_formats)
 
     args = p.parse_args(argv)
     return args.func(args)

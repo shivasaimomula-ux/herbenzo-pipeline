@@ -1,0 +1,15 @@
+[
+  {
+    "ingredient_id": "FX-BITTER-HEAT",
+    "quantity_mg": 40,
+    "bcs_class": "II",
+    "solubility": "low",
+    "permeability": "high",
+    "xlogp": 3.4,
+    "molecular_weight": 300,
+    "tastes": ["bitter"],
+    "heat_sensitive": true,
+    "volatile": true,
+    "acid_labile": false
+  }
+]

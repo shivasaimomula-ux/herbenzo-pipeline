@@ -1,0 +1,11 @@
+{
+  "ingredient_ids": ["HB-AMLA", "HB-PIPL", "HB-ASHW"],
+  "dosage_form": "avaleha",
+  "product_name": "Chyawanprash",
+  "audience": "adults",
+  "quantities_mg": {
+    "HB-AMLA": 500,
+    "HB-PIPL": 50,
+    "HB-ASHW": 200
+  }
+}

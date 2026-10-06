@@ -1,0 +1,973 @@
+{
+  "catalog_version": "1.1.0",
+  "about": "Advisory finished-format catalog. Market references are public brand or category pages checked for this file. Regulatory citations (FSSAI Nutra Regulations 2022 direction, FDA nanomaterials guidance, the EMA nanomedicines hub, and the FDA Inactive Ingredient Database) are static links checked on 6 Oct 2026 and are not brand pages. Load ceilings are formulation heuristics, not measured fill weights or published market statistics.",
+  "formats": [
+    {
+      "format_id": "suspension",
+      "name": "Suspension",
+      "category": "textbook",
+      "dosage_form_label": "suspension",
+      "aliases": [
+        "suspension",
+        "oral suspension"
+      ],
+      "audiences": [
+        "kids",
+        "teens",
+        "adults",
+        "elderly"
+      ],
+      "taste_masking": "weak",
+      "process_heat": "low",
+      "water_activity": "high",
+      "helps_low_solubility": true,
+      "protects_volatile": false,
+      "acidic": false,
+      "polyherbal": "good",
+      "preferred_bcs": [
+        "II",
+        "IV"
+      ],
+      "max_active_mg": 5000,
+      "excipients": [
+        "suspending polymer",
+        "wetting agent",
+        "preservative",
+        "flavor"
+      ],
+      "textbook_rationale": "A coarse dispersion keeps a poorly soluble herbal solid distributed in a measured liquid dose. It does not dissolve the solid; shaking and a structured vehicle keep the dose uniform.",
+      "constraints": [
+        "The dose is tasted. Bitter or astringent herbs need flavor, and often a prior mask, or the suspension will not be tolerated.",
+        "High water activity needs a preservative system and is a weak default for moisture-sensitive constituents."
+      ],
+      "references": [
+        {
+          "brand": "FDA Inactive Ingredient Database",
+          "category": "excipient precedent",
+          "url": "https://www.fda.gov/drugs/drug-approvals-and-databases/inactive-ingredients-database-download",
+          "note": "Approved US drug products list inactive ingredients by route and dosage form, with a maximum potency per unit. This is drug-product precedent, not a food-additive or FSSAI approval."
+        }
+      ]
+    },
+    {
+      "format_id": "emulsion",
+      "name": "Emulsion",
+      "category": "textbook",
+      "dosage_form_label": "emulsion",
+      "aliases": [
+        "emulsion",
+        "oral emulsion"
+      ],
+      "audiences": [
+        "teens",
+        "adults",
+        "elderly"
+      ],
+      "taste_masking": "moderate",
+      "process_heat": "low",
+      "water_activity": "high",
+      "helps_low_solubility": true,
+      "protects_volatile": true,
+      "acidic": false,
+      "polyherbal": "limited",
+      "preferred_bcs": [
+        "II",
+        "IV"
+      ],
+      "max_active_mg": 3000,
+      "excipients": [
+        "oil phase",
+        "emulsifier",
+        "preservative",
+        "flavor"
+      ],
+      "textbook_rationale": "An oil-in-water emulsion gives a lipophilic marker an oil phase and a drinkable continuous phase. Droplet size here is conventional, not nanoscale.",
+      "constraints": [
+        "Creaming, phase separation, and preservative efficacy have to be shown on the finished formula.",
+        "A large watery phase still tastes of the herb unless the oil phase and flavor system cover it."
+      ],
+      "references": [
+        {
+          "brand": "FDA",
+          "category": "nanomaterials guidance",
+          "url": "https://www.fda.gov/regulatory-information/search-fda-guidance-documents/drug-products-including-biological-products-contain-nanomaterials-guidance-industry",
+          "note": "Drug Products, Including Biological Products, that Contain Nanomaterials (April 2022). A conventional emulsion is not itself a nanomaterial; cite this only if the formula is developed as a nano or lipid nanocarrier. It is drug-product guidance, not a food approval."
+        },
+        {
+          "brand": "EMA",
+          "category": "nanomedicines",
+          "url": "https://www.ema.europa.eu/en/human-regulatory-overview/research-development/scientific-guidelines/multidisciplinary-guidelines/multidisciplinary-nanomedicines",
+          "note": "EMA nanomedicines guideline hub. A conventional emulsion is not itself a nanomaterial; cite this only if the formula is developed as a nano or lipid nanocarrier."
+        },
+        {
+          "brand": "FDA Inactive Ingredient Database",
+          "category": "excipient precedent",
+          "url": "https://www.fda.gov/drugs/drug-approvals-and-databases/inactive-ingredients-database-download",
+          "note": "Approved US drug products list inactive ingredients by route and dosage form, with a maximum potency per unit. This is drug-product precedent, not a food-additive or FSSAI approval."
+        }
+      ]
+    },
+    {
+      "format_id": "tablet",
+      "name": "Tablet",
+      "category": "textbook",
+      "dosage_form_label": "tablet",
+      "aliases": [
+        "tablet",
+        "tablets"
+      ],
+      "audiences": [
+        "teens",
+        "adults",
+        "elderly"
+      ],
+      "taste_masking": "moderate",
+      "process_heat": "none",
+      "water_activity": "low",
+      "helps_low_solubility": false,
+      "protects_volatile": false,
+      "acidic": false,
+      "polyherbal": "good",
+      "preferred_bcs": [
+        "I",
+        "III"
+      ],
+      "max_active_mg": 1000,
+      "excipients": [
+        "filler",
+        "binder",
+        "disintegrant",
+        "lubricant",
+        "film coat"
+      ],
+      "textbook_rationale": "Direct compression or granulation makes a stable unit dose with low water activity and no cook step. A film coat is what actually hides bitterness; an uncoated core does not.",
+      "constraints": [
+        "Swallowing a large polyherbal tablet is difficult for some children and for people with dysphagia.",
+        "A low-solubility marker is not helped by tableting alone."
+      ],
+      "references": [
+        {
+          "brand": "FDA Inactive Ingredient Database",
+          "category": "excipient precedent",
+          "url": "https://www.fda.gov/drugs/drug-approvals-and-databases/inactive-ingredients-database-download",
+          "note": "Approved US drug products list inactive ingredients by route and dosage form, with a maximum potency per unit. This is drug-product precedent, not a food-additive or FSSAI approval."
+        }
+      ]
+    },
+    {
+      "format_id": "capsule",
+      "name": "Capsule",
+      "category": "textbook",
+      "dosage_form_label": "capsule",
+      "aliases": [
+        "capsule",
+        "capsules"
+      ],
+      "audiences": [
+        "teens",
+        "adults",
+        "elderly"
+      ],
+      "taste_masking": "strong",
+      "process_heat": "none",
+      "water_activity": "low",
+      "helps_low_solubility": false,
+      "protects_volatile": false,
+      "acidic": false,
+      "polyherbal": "good",
+      "preferred_bcs": [
+        "I",
+        "III"
+      ],
+      "max_active_mg": 800,
+      "excipients": [
+        "capsule shell",
+        "filler",
+        "glidant"
+      ],
+      "textbook_rationale": "A dry fill in a shell avoids a cook step and keeps the herb off the tongue until the shell opens. It is the default when solubility is already adequate and the dose fits in one or two shells.",
+      "constraints": [
+        "Shell fill is finite. A multi-gram classical dose becomes a handful of capsules.",
+        "Young children who cannot swallow a shell are a poor audience."
+      ],
+      "references": [
+        {
+          "brand": "Ritual",
+          "category": "capsule multivitamins",
+          "url": "https://ritual.com/",
+          "note": "Consumer capsule line. Cited as a finished-format example, not as an herbal monograph."
+        },
+        {
+          "brand": "FDA Inactive Ingredient Database",
+          "category": "excipient precedent",
+          "url": "https://www.fda.gov/drugs/drug-approvals-and-databases/inactive-ingredients-database-download",
+          "note": "Approved US drug products list inactive ingredients by route and dosage form, with a maximum potency per unit. This is drug-product precedent, not a food-additive or FSSAI approval."
+        }
+      ]
+    },
+    {
+      "format_id": "powder_sachet",
+      "name": "Powder or sachet",
+      "category": "textbook",
+      "dosage_form_label": "powder",
+      "aliases": [
+        "powder",
+        "powders",
+        "sachet",
+        "sachets",
+        "stick pack"
+      ],
+      "audiences": [
+        "kids",
+        "teens",
+        "adults",
+        "elderly"
+      ],
+      "taste_masking": "weak",
+      "process_heat": "none",
+      "water_activity": "low",
+      "helps_low_solubility": false,
+      "protects_volatile": false,
+      "acidic": false,
+      "polyherbal": "good",
+      "preferred_bcs": [],
+      "max_active_mg": 10000,
+      "excipients": [
+        "carrier",
+        "flow aid",
+        "flavor"
+      ],
+      "textbook_rationale": "A dry blend or unit-dose sachet holds a large polyherbal mass with no cook step, which is why classical churnas map here. The powder is tasted as soon as it is mixed or placed on the tongue.",
+      "constraints": [
+        "Bitter, astringent, and pungent herbs are fully exposed unless a separate mask is added.",
+        "Hygroscopic powders need a real moisture barrier in the sachet."
+      ],
+      "references": [
+        {
+          "brand": "FDA Inactive Ingredient Database",
+          "category": "excipient precedent",
+          "url": "https://www.fda.gov/drugs/drug-approvals-and-databases/inactive-ingredients-database-download",
+          "note": "Approved US drug products list inactive ingredients by route and dosage form, with a maximum potency per unit. This is drug-product precedent, not a food-additive or FSSAI approval."
+        }
+      ]
+    },
+    {
+      "format_id": "syrup",
+      "name": "Syrup",
+      "category": "textbook",
+      "dosage_form_label": "syrup",
+      "aliases": [
+        "syrup",
+        "syrups"
+      ],
+      "audiences": [
+        "kids",
+        "teens",
+        "adults",
+        "elderly"
+      ],
+      "taste_masking": "moderate",
+      "process_heat": "low",
+      "water_activity": "high",
+      "helps_low_solubility": false,
+      "protects_volatile": false,
+      "acidic": false,
+      "polyherbal": "good",
+      "preferred_bcs": [
+        "I",
+        "III"
+      ],
+      "max_active_mg": 5000,
+      "excipients": [
+        "sucrose or polyol",
+        "preservative",
+        "buffer",
+        "flavor"
+      ],
+      "textbook_rationale": "A viscous sweet vehicle is the textbook way to carry a water-soluble herb and soften moderate bitterness. The active can often be added after any heating of the vehicle.",
+      "constraints": [
+        "Sugar load and dental exposure matter for children, and a sugar-free vehicle changes the masking.",
+        "Poorly soluble markers settle unless the syrup is really a suspension."
+      ],
+      "references": [
+        {
+          "brand": "Zarbee's",
+          "category": "children's syrups",
+          "url": "https://www.zarbees.com/",
+          "note": "Children's syrup brand. Cited as a consumer syrup format, not as a classical avaleha."
+        },
+        {
+          "brand": "FDA Inactive Ingredient Database",
+          "category": "excipient precedent",
+          "url": "https://www.fda.gov/drugs/drug-approvals-and-databases/inactive-ingredients-database-download",
+          "note": "Approved US drug products list inactive ingredients by route and dosage form, with a maximum potency per unit. This is drug-product precedent, not a food-additive or FSSAI approval."
+        }
+      ]
+    },
+    {
+      "format_id": "gummy",
+      "name": "Gummy",
+      "category": "market",
+      "dosage_form_label": "gummy",
+      "aliases": [
+        "gummy",
+        "gummies"
+      ],
+      "audiences": [
+        "kids",
+        "teens",
+        "adults",
+        "elderly"
+      ],
+      "taste_masking": "strong",
+      "process_heat": "high",
+      "water_activity": "high",
+      "helps_low_solubility": false,
+      "protects_volatile": false,
+      "acidic": true,
+      "polyherbal": "good",
+      "preferred_bcs": [],
+      "max_active_mg": 800,
+      "excipients": [
+        "pectin",
+        "gelatin",
+        "vegan hydrocolloid",
+        "sweetener",
+        "acidulant",
+        "flavor"
+      ],
+      "textbook_rationale": "A pectin, gelatin, or other hydrocolloid gel splits a serving into several flavored pieces so a bitter herb is diluted by sweetener and acid. That is the consumer pattern that made multi-ingredient nutrition gummies a daily habit.",
+      "constraints": [
+        "The gel is cooked. Heat-labile and volatile constituents need protection or a late, cooler addition, which many gummy processes do not allow.",
+        "Piece weight limits the herbal load. A classical multi-gram dose has to be concentrated or it will not set as a gummy."
+      ],
+      "references": [
+        {
+          "brand": "Grüns",
+          "category": "vegan superfood gummies",
+          "url": "https://gruns.co/",
+          "note": "US daily-nutrition gummies sold as a pack of small pieces. The brand states the gummies are vegan and contain no gelatin. Hydrocolloid type is not asserted here."
+        },
+        {
+          "brand": "OLLY",
+          "category": "gummy vitamins",
+          "url": "https://www.olly.com/",
+          "note": "Consumer gummy vitamin brand. Cited as a format example only."
+        },
+        {
+          "brand": "FSSAI",
+          "category": "India nutraceutical regulation",
+          "url": "https://www.fssai.gov.in/upload/advisories/2022/03/6243ef28079ceDirection_Nutra_30_03_2022.pdf",
+          "note": "Direction under the Nutra Regulations, 2022. Clause 5(1) permits gummies, jelly, chewables, mouth-dissolving strips, bars, and candies for health supplements and nutraceuticals. Gummies, jelly, and chewables are not permitted for FSMP."
+        },
+        {
+          "brand": "FDA Inactive Ingredient Database",
+          "category": "excipient precedent",
+          "url": "https://www.fda.gov/drugs/drug-approvals-and-databases/inactive-ingredients-database-download",
+          "note": "Approved US drug products list inactive ingredients by route and dosage form, with a maximum potency per unit. This is drug-product precedent, not a food-additive or FSSAI approval."
+        }
+      ]
+    },
+    {
+      "format_id": "soft_chew",
+      "name": "Chew or soft chew",
+      "category": "market",
+      "dosage_form_label": "soft chew",
+      "aliases": [
+        "chew",
+        "chews",
+        "soft chew",
+        "soft chews"
+      ],
+      "audiences": [
+        "kids",
+        "teens",
+        "adults",
+        "elderly"
+      ],
+      "taste_masking": "strong",
+      "process_heat": "high",
+      "water_activity": "low",
+      "helps_low_solubility": false,
+      "protects_volatile": false,
+      "acidic": false,
+      "polyherbal": "good",
+      "preferred_bcs": [],
+      "max_active_mg": 800,
+      "excipients": [
+        "chew base",
+        "binder",
+        "sweetener",
+        "flavor"
+      ],
+      "textbook_rationale": "A soft chew keeps the herb in a flavored matrix that is chewed rather than swallowed whole, which is how several fruit-and-vegetable products made a powder dose feel like a snack.",
+      "constraints": [
+        "Many chew bases are cooked or warm-extruded. Treat a cold-process chew as a development choice, not the default.",
+        "Sticky chews are a choking concern for young children."
+      ],
+      "references": [
+        {
+          "brand": "Juice Plus+",
+          "category": "fruit and vegetable chewables",
+          "url": "https://us.juiceplus.com/collections/chewables",
+          "note": "Whole-food chewable line positioned for children and adults. Cited as a chew format, not as a clinical dose claim."
+        },
+        {
+          "brand": "FSSAI",
+          "category": "India nutraceutical regulation",
+          "url": "https://www.fssai.gov.in/upload/advisories/2022/03/6243ef28079ceDirection_Nutra_30_03_2022.pdf",
+          "note": "Direction under the Nutra Regulations, 2022. Clause 5(1) permits gummies, jelly, chewables, mouth-dissolving strips, bars, and candies for health supplements and nutraceuticals. Gummies, jelly, and chewables are not permitted for FSMP."
+        },
+        {
+          "brand": "FDA Inactive Ingredient Database",
+          "category": "excipient precedent",
+          "url": "https://www.fda.gov/drugs/drug-approvals-and-databases/inactive-ingredients-database-download",
+          "note": "Approved US drug products list inactive ingredients by route and dosage form, with a maximum potency per unit. This is drug-product precedent, not a food-additive or FSSAI approval."
+        }
+      ]
+    },
+    {
+      "format_id": "agar_jelly",
+      "name": "Jelly (agar-agar or other gel)",
+      "category": "market",
+      "dosage_form_label": "jelly",
+      "aliases": [
+        "jelly",
+        "jellies",
+        "agar",
+        "agar-agar"
+      ],
+      "audiences": [
+        "kids",
+        "teens",
+        "adults",
+        "elderly"
+      ],
+      "taste_masking": "strong",
+      "process_heat": "high",
+      "water_activity": "high",
+      "helps_low_solubility": false,
+      "protects_volatile": false,
+      "acidic": false,
+      "polyherbal": "good",
+      "preferred_bcs": [],
+      "max_active_mg": 600,
+      "excipients": [
+        "agar-agar",
+        "konjac",
+        "sweetener",
+        "flavor"
+      ],
+      "textbook_rationale": "Agar-agar dissolves when heated and sets as it cools, so a jelly can carry a flavored herbal dose in a soft bite. The setting gel is a confection, closer to a chew than to a syrup.",
+      "constraints": [
+        "Agar has to be heated to dissolve. Add heat-sensitive constituents only on the way down in temperature, if the process allows it.",
+        "Jelly pieces are a choking hazard for small children if they are not chewed."
+      ],
+      "references": [
+        {
+          "brand": "Orihiro",
+          "category": "konjac jelly pouches",
+          "url": "https://health.orihiro.com/en/jelly/",
+          "note": "Ready-to-eat konjac jelly. The cited product is konjac, not an agar-agar herbal supplement. Agar-agar is the textbook gelling option named above."
+        },
+        {
+          "brand": "FSSAI",
+          "category": "India nutraceutical regulation",
+          "url": "https://www.fssai.gov.in/upload/advisories/2022/03/6243ef28079ceDirection_Nutra_30_03_2022.pdf",
+          "note": "Direction under the Nutra Regulations, 2022. Clause 5(1) permits gummies, jelly, chewables, mouth-dissolving strips, bars, and candies for health supplements and nutraceuticals. Gummies, jelly, and chewables are not permitted for FSMP."
+        },
+        {
+          "brand": "FDA Inactive Ingredient Database",
+          "category": "excipient precedent",
+          "url": "https://www.fda.gov/drugs/drug-approvals-and-databases/inactive-ingredients-database-download",
+          "note": "Approved US drug products list inactive ingredients by route and dosage form, with a maximum potency per unit. This is drug-product precedent, not a food-additive or FSSAI approval."
+        }
+      ]
+    },
+    {
+      "format_id": "oral_gel",
+      "name": "Oral gel sachet or stick pack",
+      "category": "market",
+      "dosage_form_label": "oral gel",
+      "aliases": [
+        "oral gel",
+        "gel sachet",
+        "gel stick",
+        "stick gel"
+      ],
+      "audiences": [
+        "teens",
+        "adults",
+        "elderly"
+      ],
+      "taste_masking": "strong",
+      "process_heat": "low",
+      "water_activity": "high",
+      "helps_low_solubility": false,
+      "protects_volatile": false,
+      "acidic": false,
+      "polyherbal": "limited",
+      "preferred_bcs": [
+        "I",
+        "III"
+      ],
+      "max_active_mg": 1000,
+      "excipients": [
+        "humectant",
+        "gel former",
+        "sweetener",
+        "flavor"
+      ],
+      "textbook_rationale": "A unit-dose gel in a sachet or stick pack is swallowed without water. Flavor and texture mask moderate bitterness, and the active can be blended in without a hard candy cook.",
+      "constraints": [
+        "Water activity is still high, so preservative choice and microbial limits belong in development.",
+        "A thick gel hides only so much bitterness before the flavor system fails."
+      ],
+      "references": [
+        {
+          "brand": "GU Energy",
+          "category": "oral energy gel",
+          "url": "https://guenergy.com/products/energy-gel",
+          "note": "Sports carbohydrate gel in a portable packet. Cited as the consumer gel format, not as an herbal medicine."
+        },
+        {
+          "brand": "FDA Inactive Ingredient Database",
+          "category": "excipient precedent",
+          "url": "https://www.fda.gov/drugs/drug-approvals-and-databases/inactive-ingredients-database-download",
+          "note": "Approved US drug products list inactive ingredients by route and dosage form, with a maximum potency per unit. This is drug-product precedent, not a food-additive or FSSAI approval."
+        }
+      ]
+    },
+    {
+      "format_id": "effervescent_tablet",
+      "name": "Effervescent tablet",
+      "category": "market",
+      "dosage_form_label": "effervescent tablet",
+      "aliases": [
+        "effervescent",
+        "effervescent tablet",
+        "effervescent tablets"
+      ],
+      "audiences": [
+        "teens",
+        "adults",
+        "elderly"
+      ],
+      "taste_masking": "strong",
+      "process_heat": "low",
+      "water_activity": "low",
+      "helps_low_solubility": true,
+      "protects_volatile": false,
+      "acidic": true,
+      "polyherbal": "limited",
+      "preferred_bcs": [
+        "II",
+        "IV"
+      ],
+      "max_active_mg": 1500,
+      "excipients": [
+        "citric acid",
+        "bicarbonate",
+        "sweetener",
+        "flavor"
+      ],
+      "textbook_rationale": "Compression avoids a cook step. In water the acid-carbonate pair makes a flavored drink, which is a standard way to mask bitterness and to present a poorly wetting powder as a solution or fine dispersion.",
+      "constraints": [
+        "The drink is acidic. An acid-labile marker is a poor fit.",
+        "Sodium or potassium load and a fizzy drink are not a default for young children."
+      ],
+      "references": [
+        {
+          "brand": "Nuun",
+          "category": "effervescent tablets",
+          "url": "https://nuunlife.com/",
+          "note": "Effervescent electrolyte and vitamin tablets. Cited as the consumer format, not as an herbal dose."
+        },
+        {
+          "brand": "FDA Inactive Ingredient Database",
+          "category": "excipient precedent",
+          "url": "https://www.fda.gov/drugs/drug-approvals-and-databases/inactive-ingredients-database-download",
+          "note": "Approved US drug products list inactive ingredients by route and dosage form, with a maximum potency per unit. This is drug-product precedent, not a food-additive or FSSAI approval."
+        }
+      ]
+    },
+    {
+      "format_id": "functional_drink",
+      "name": "Functional drink",
+      "category": "market",
+      "dosage_form_label": "functional drink",
+      "aliases": [
+        "drink",
+        "functional drink",
+        "beverage"
+      ],
+      "audiences": [
+        "teens",
+        "adults",
+        "elderly"
+      ],
+      "taste_masking": "moderate",
+      "process_heat": "low",
+      "water_activity": "high",
+      "helps_low_solubility": true,
+      "protects_volatile": false,
+      "acidic": false,
+      "polyherbal": "good",
+      "preferred_bcs": [
+        "II",
+        "IV"
+      ],
+      "max_active_mg": 8000,
+      "excipients": [
+        "water or juice",
+        "dispersant",
+        "sweetener",
+        "flavor",
+        "preservative"
+      ],
+      "textbook_rationale": "A ready or mix-in drink spreads a polyherbal serving through a flavored liquid. Powders that are stirred into water are the usual retail form of this idea.",
+      "constraints": [
+        "Taste is only moderately covered, and a large herbal load still reads as herbal.",
+        "A preserved ready-to-drink liquid is a different stability problem from a dry mix."
+      ],
+      "references": [
+        {
+          "brand": "AG1",
+          "category": "daily health drink mix",
+          "url": "https://drinkag1.com/",
+          "note": "Powder mixed into a drink. Cited as a functional-drink format, not as a ready-to-drink shot and not as a clinical claim."
+        },
+        {
+          "brand": "FDA Inactive Ingredient Database",
+          "category": "excipient precedent",
+          "url": "https://www.fda.gov/drugs/drug-approvals-and-databases/inactive-ingredients-database-download",
+          "note": "Approved US drug products list inactive ingredients by route and dosage form, with a maximum potency per unit. This is drug-product precedent, not a food-additive or FSSAI approval."
+        }
+      ]
+    },
+    {
+      "format_id": "functional_shot",
+      "name": "Functional shot",
+      "category": "market",
+      "dosage_form_label": "shot",
+      "aliases": [
+        "shot",
+        "shots",
+        "wellness shot"
+      ],
+      "audiences": [
+        "teens",
+        "adults"
+      ],
+      "taste_masking": "moderate",
+      "process_heat": "low",
+      "water_activity": "high",
+      "helps_low_solubility": false,
+      "protects_volatile": false,
+      "acidic": false,
+      "polyherbal": "limited",
+      "preferred_bcs": [
+        "I",
+        "III"
+      ],
+      "max_active_mg": 2000,
+      "excipients": [
+        "juice or puree",
+        "botanical extract",
+        "preservative or cold-chain"
+      ],
+      "textbook_rationale": "A 1–2 ounce shot concentrates a botanical dose in a small swallow. The format traded convenience for a strong taste, which several ginger and turmeric shots sell as part of the product.",
+      "constraints": [
+        "Volume is small, so insoluble solids and high extract loads make the shot gritty or harsh.",
+        "Not a children's format. The taste is meant to be noticed."
+      ],
+      "references": [
+        {
+          "brand": "Vive Organic",
+          "category": "wellness shots",
+          "url": "https://viveorganic.com/",
+          "note": "Cold-pressed style wellness shots, including ginger and turmeric. Cited as a shot format only."
+        },
+        {
+          "brand": "FDA Inactive Ingredient Database",
+          "category": "excipient precedent",
+          "url": "https://www.fda.gov/drugs/drug-approvals-and-databases/inactive-ingredients-database-download",
+          "note": "Approved US drug products list inactive ingredients by route and dosage form, with a maximum potency per unit. This is drug-product precedent, not a food-additive or FSSAI approval."
+        }
+      ]
+    },
+    {
+      "format_id": "frozen_dessert",
+      "name": "Gelato or frozen dessert",
+      "category": "market",
+      "dosage_form_label": "frozen dessert",
+      "aliases": [
+        "gelato",
+        "frozen dessert",
+        "frozen",
+        "ice cream"
+      ],
+      "audiences": [
+        "kids",
+        "teens",
+        "adults"
+      ],
+      "taste_masking": "strong",
+      "process_heat": "none",
+      "water_activity": "high",
+      "helps_low_solubility": false,
+      "protects_volatile": false,
+      "acidic": false,
+      "polyherbal": "limited",
+      "preferred_bcs": [],
+      "max_active_mg": 5000,
+      "excipients": [
+        "dairy or non-dairy base",
+        "sugar or polyol",
+        "stabilizer",
+        "flavor"
+      ],
+      "textbook_rationale": "A frozen base masks bitterness with fat, sugar, and cold, and the herb can be folded in after pasteurization so it never sees that heat. It is a food format, not a pharmacopoeial dosage form.",
+      "constraints": [
+        "Freeze-thaw, dose uniformity through a tub, and a cold chain are the development problems.",
+        "No verified herbal or nutrition gelato brand is cited here."
+      ],
+      "references": []
+    },
+    {
+      "format_id": "nutrition_bar",
+      "name": "Nutrition bar",
+      "category": "market",
+      "dosage_form_label": "bar",
+      "aliases": [
+        "bar",
+        "bars",
+        "nutrition bar"
+      ],
+      "audiences": [
+        "teens",
+        "adults"
+      ],
+      "taste_masking": "moderate",
+      "process_heat": "high",
+      "water_activity": "low",
+      "helps_low_solubility": false,
+      "protects_volatile": false,
+      "acidic": false,
+      "polyherbal": "good",
+      "preferred_bcs": [],
+      "max_active_mg": 4000,
+      "excipients": [
+        "syrup binder",
+        "protein or grain",
+        "flavor",
+        "coating"
+      ],
+      "textbook_rationale": "A bound bar can hold a large polyherbal or nutrition mass in one portable piece, with flavor and inclusions doing most of the masking.",
+      "constraints": [
+        "Binders are typically cooked. Heat-sensitive and volatile constituents are at risk.",
+        "Water activity must stay low enough to control texture and microbes."
+      ],
+      "references": [
+        {
+          "brand": "GoMacro",
+          "category": "plant-based nutrition bars",
+          "url": "https://gomacro.com/",
+          "note": "Organic nutrition bars. Cited as a bar format, not as an herbal medicine."
+        },
+        {
+          "brand": "FSSAI",
+          "category": "India nutraceutical regulation",
+          "url": "https://www.fssai.gov.in/upload/advisories/2022/03/6243ef28079ceDirection_Nutra_30_03_2022.pdf",
+          "note": "Direction under the Nutra Regulations, 2022. Clause 5(1) permits bars for health supplements and nutraceuticals, along with gummies, jelly, chewables, mouth-dissolving strips, and candies. Gummies, jelly, and chewables are not permitted for FSMP."
+        },
+        {
+          "brand": "FDA Inactive Ingredient Database",
+          "category": "excipient precedent",
+          "url": "https://www.fda.gov/drugs/drug-approvals-and-databases/inactive-ingredients-database-download",
+          "note": "Approved US drug products list inactive ingredients by route and dosage form, with a maximum potency per unit. This is drug-product precedent, not a food-additive or FSSAI approval."
+        }
+      ]
+    },
+    {
+      "format_id": "oral_film",
+      "name": "Oral strip or film",
+      "category": "market",
+      "dosage_form_label": "oral film",
+      "aliases": [
+        "oral film",
+        "oral strip",
+        "strip",
+        "strips",
+        "film",
+        "films"
+      ],
+      "audiences": [
+        "teens",
+        "adults",
+        "elderly"
+      ],
+      "taste_masking": "moderate",
+      "process_heat": "low",
+      "water_activity": "low",
+      "helps_low_solubility": false,
+      "protects_volatile": false,
+      "acidic": false,
+      "polyherbal": "limited",
+      "preferred_bcs": [
+        "I",
+        "III"
+      ],
+      "max_active_mg": 80,
+      "excipients": [
+        "film polymer",
+        "plasticizer",
+        "sweetener",
+        "flavor"
+      ],
+      "textbook_rationale": "A solvent-cast or printed film carries a small dose on the tongue without water and without a cook step. Flavor covers a low load; it does not cover a large bitter extract.",
+      "constraints": [
+        "Load per strip is small. Polyherbal formulas have to be highly concentrated or they will not fit.",
+        "The film is tasted as it dissolves."
+      ],
+      "references": [
+        {
+          "brand": "Wellbeing Nutrition",
+          "category": "oral thin strips",
+          "url": "https://wellbeingnutrition.com/collections/melts-oral-thin-strips",
+          "note": "Consumer oral thin strips sold as melts. Cited as a format example only; absorption claims on the brand site are not used here."
+        },
+        {
+          "brand": "FSSAI",
+          "category": "India nutraceutical regulation",
+          "url": "https://www.fssai.gov.in/upload/advisories/2022/03/6243ef28079ceDirection_Nutra_30_03_2022.pdf",
+          "note": "Direction under the Nutra Regulations, 2022. Clause 5(1) permits mouth-dissolving strips for health supplements and nutraceuticals, along with gummies, jelly, chewables, bars, and candies. Gummies, jelly, and chewables are not permitted for FSMP."
+        },
+        {
+          "brand": "FDA Inactive Ingredient Database",
+          "category": "excipient precedent",
+          "url": "https://www.fda.gov/drugs/drug-approvals-and-databases/inactive-ingredients-database-download",
+          "note": "Approved US drug products list inactive ingredients by route and dosage form, with a maximum potency per unit. This is drug-product precedent, not a food-additive or FSSAI approval."
+        }
+      ]
+    },
+    {
+      "format_id": "odt_melt",
+      "name": "Melt or orally dispersible unit",
+      "category": "market",
+      "dosage_form_label": "melt",
+      "aliases": [
+        "melt",
+        "melts",
+        "orally dispersible",
+        "odt"
+      ],
+      "audiences": [
+        "kids",
+        "teens",
+        "adults",
+        "elderly"
+      ],
+      "taste_masking": "moderate",
+      "process_heat": "low",
+      "water_activity": "low",
+      "helps_low_solubility": false,
+      "protects_volatile": false,
+      "acidic": false,
+      "polyherbal": "limited",
+      "preferred_bcs": [
+        "I",
+        "III"
+      ],
+      "max_active_mg": 150,
+      "excipients": [
+        "fast-dissolve matrix",
+        "sweetener",
+        "flavor"
+      ],
+      "textbook_rationale": "An orally dispersible melt or tablet breaks up in saliva, which helps people who cannot swallow a conventional tablet. Taste masking is flavor and a small dose, not a shell.",
+      "constraints": [
+        "The whole dose is tasted. Bitter herbs need a low load or a separate mask.",
+        "Friability and moisture pickup are the usual stability limits."
+      ],
+      "references": [
+        {
+          "brand": "Wellbeing Nutrition",
+          "category": "orally dispersible melts",
+          "url": "https://wellbeingnutrition.com/collections/melts-oral-thin-strips",
+          "note": "Same melts line as the oral-strip reference. One product family illustrating a dispersible film, not two independent clinical programs."
+        },
+        {
+          "brand": "FSSAI",
+          "category": "India nutraceutical regulation",
+          "url": "https://www.fssai.gov.in/upload/advisories/2022/03/6243ef28079ceDirection_Nutra_30_03_2022.pdf",
+          "note": "Direction under the Nutra Regulations, 2022. Clause 5(1) permits mouth-dissolving strips for health supplements and nutraceuticals, along with gummies, jelly, chewables, bars, and candies. Gummies, jelly, and chewables are not permitted for FSMP."
+        },
+        {
+          "brand": "FDA Inactive Ingredient Database",
+          "category": "excipient precedent",
+          "url": "https://www.fda.gov/drugs/drug-approvals-and-databases/inactive-ingredients-database-download",
+          "note": "Approved US drug products list inactive ingredients by route and dosage form, with a maximum potency per unit. This is drug-product precedent, not a food-additive or FSSAI approval."
+        }
+      ]
+    },
+    {
+      "format_id": "nanoemulsion",
+      "name": "Nanoemulsion",
+      "category": "textbook",
+      "dosage_form_label": "nanoemulsion",
+      "aliases": [
+        "nanoemulsion",
+        "nano-emulsion",
+        "nano emulsion"
+      ],
+      "audiences": [
+        "adults"
+      ],
+      "taste_masking": "moderate",
+      "process_heat": "low",
+      "water_activity": "high",
+      "helps_low_solubility": true,
+      "protects_volatile": true,
+      "acidic": false,
+      "polyherbal": "limited",
+      "preferred_bcs": [
+        "II",
+        "IV"
+      ],
+      "max_active_mg": 500,
+      "excipients": [
+        "oil",
+        "surfactant",
+        "co-surfactant",
+        "water"
+      ],
+      "textbook_rationale": "A nanoemulsion is a solubilizing carrier for a lipophilic marker: small oil droplets in water, made with surfactant and shear. It changes the carrier, not the herbal constituent, and the dose of oil phase is usually low.",
+      "constraints": [
+        "Surfactant load, droplet growth, and a low oil-phase capacity limit how much extract fits.",
+        "It is a carrier, not a finished habit format. The drink, softgel, or sachet around it still has to be chosen.",
+        "No verified consumer nanoemulsion brand is cited here."
+      ],
+      "references": [
+        {
+          "brand": "FDA",
+          "category": "nanomaterials guidance",
+          "url": "https://www.fda.gov/regulatory-information/search-fda-guidance-documents/drug-products-including-biological-products-contain-nanomaterials-guidance-industry",
+          "note": "Drug Products, Including Biological Products, that Contain Nanomaterials (April 2022). Guidance for industry on drug products. It is not a food or dietary-supplement approval of a nanoemulsion."
+        },
+        {
+          "brand": "EMA",
+          "category": "nanomedicines",
+          "url": "https://www.ema.europa.eu/en/human-regulatory-overview/research-development/scientific-guidelines/multidisciplinary-guidelines/multidisciplinary-nanomedicines",
+          "note": "EMA scientific-guideline hub for nanomedicines, including the nanotechnology reflection paper, intravenous liposomal products, block-copolymer micelles, and surface coatings."
+        },
+        {
+          "brand": "FDA Inactive Ingredient Database",
+          "category": "excipient precedent",
+          "url": "https://www.fda.gov/drugs/drug-approvals-and-databases/inactive-ingredients-database-download",
+          "note": "Approved US drug products list inactive ingredients by route and dosage form, with a maximum potency per unit. This is drug-product precedent, not a food-additive or FSSAI approval."
+        }
+      ]
+    }
+  ]
+}

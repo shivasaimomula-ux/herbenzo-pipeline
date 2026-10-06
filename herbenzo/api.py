@@ -37,6 +37,7 @@ from herbenzo.contract_gate import (
     validate_inbound_formulation_spec,
     validate_outbound_modernized_sku,
 )
+from herbenzo.format_suggestions import suggest_from_payload
 from herbenzo.services.registries import (
     UnknownIngredient,
     UnknownMarker,
@@ -79,6 +80,7 @@ def _health_payload() -> dict[str, Any]:
             "health": "/health",
             "modernize": "POST /modernize",
             "ingredients": "GET /ingredients",
+            "suggest_formats": "POST /suggest-formats",
             "drafts": "GET/POST /drafts",
             "draft": "GET/DELETE /drafts/{id}",
             "static": "/static/",
@@ -319,6 +321,38 @@ def delete_draft(draft_id: str):
             raise HTTPException(status_code=404, detail=f"No draft {draft_id}")
         path.unlink()
     return {"deleted": True, "id": draft_id}
+
+
+@app.post("/suggest-formats")
+async def suggest_formats(request: Request):
+    """Advisory finished-format ranking for one or more ingredient ids.
+
+    Does not run the modernizer and does not change a ModernizedSKU. Unknown
+    registry ids return 422 ``unknown_ingredient``, same as ``/modernize``.
+    """
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=http_error_detail(ValueError("Request body must be JSON")),
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=422,
+            detail=http_error_detail(ValueError("Request body must be a JSON object")),
+        )
+
+    try:
+        return suggest_from_payload(payload)
+    except (UnknownIngredient, UnknownMarker) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=http_error_detail(exc, code="unknown_ingredient"),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=http_error_detail(exc)) from exc
 
 
 @app.post("/modernize")

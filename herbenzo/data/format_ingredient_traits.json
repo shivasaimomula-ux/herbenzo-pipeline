@@ -1,0 +1,49 @@
+{
+  "about": "Organoleptic and process notes used only by format suggestions. They are not clinical claims and they do not change BCS, delivery, or ModernizedSKU decisions.",
+  "ingredients": {
+    "HB-ASHW": {
+      "tastes": ["bitter"],
+      "note": "Ashwagandha root is organoleptically bitter."
+    },
+    "HB-TURM": {
+      "tastes": ["bitter", "pungent"],
+      "note": "Turmeric rhizome is bitter and slightly pungent. Curcumin also stains."
+    },
+    "HB-BERB": {
+      "tastes": ["bitter"],
+      "note": "Berberine is an intensely bitter isoquinoline alkaloid."
+    },
+    "HB-BOSW": {
+      "tastes": ["bitter"],
+      "note": "Boswellia gum resin is bitter and resinous."
+    },
+    "HB-PIPL": {
+      "tastes": ["pungent"],
+      "note": "Piperine is pungent."
+    },
+    "HB-HARI": {
+      "tastes": ["astringent"],
+      "note": "Haritaki pericarp is rich in hydrolysable tannins and tastes astringent."
+    },
+    "HB-BIBH": {
+      "tastes": ["astringent"],
+      "note": "Bibhitaki pericarp is astringent."
+    },
+    "HB-AMLA": {
+      "tastes": ["sour", "astringent"],
+      "note": "Amla fruit is sour and astringent."
+    },
+    "HB-CINN": {
+      "tastes": ["pungent", "aromatic"],
+      "volatile": true,
+      "heat_sensitive": true,
+      "note": "Cinnamaldehyde is a volatile oil constituent and is lost with high heat."
+    },
+    "HB-ELAA": {
+      "tastes": ["aromatic", "pungent"],
+      "volatile": true,
+      "heat_sensitive": true,
+      "note": "Eucalyptol, the cardamom marker, is volatile and is lost with high heat."
+    }
+  }
+}

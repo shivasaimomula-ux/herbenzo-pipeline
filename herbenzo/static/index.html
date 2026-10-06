@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,500;7..72,700&family=Sora:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/format_suggestions.css" />
 </head>
 <body>
   <div class="atmosphere" aria-hidden="true"></div>
@@ -112,6 +113,25 @@
         </div>
         <div id="ingredient-editors" class="ing-editors"></div>
 
+        <section id="format-suggestions" class="format-suggestions" aria-labelledby="format-suggestions-heading">
+          <div class="subhead">
+            <h3 id="format-suggestions-heading">Suggested modern formats</h3>
+            <button type="button" class="ghost" id="refresh-formats">Refresh suggestions</button>
+          </div>
+          <p class="hint">Advisory only. Ranked for every ingredient currently selected. Choosing a card fills the finished-form field and does not change the modernizer.</p>
+          <label class="field format-audience">
+            Audience
+            <select id="format-audience">
+              <option value="">No preference</option>
+              <option value="kids">Kids</option>
+              <option value="teens">Teens</option>
+              <option value="adults">Adults</option>
+              <option value="elderly">Elderly</option>
+            </select>
+          </label>
+          <div id="format-suggestion-cards" class="format-cards" aria-live="polite"></div>
+        </section>
+
         <details class="raw preview" open>
           <summary>FormulationSpec preview</summary>
           <pre id="spec-preview"></pre>
@@ -179,5 +199,6 @@
     </section>
   </main>
   <script src="/static/app.js"></script>
+  <script src="/static/format_suggestions.js"></script>
 </body>
 </html>
