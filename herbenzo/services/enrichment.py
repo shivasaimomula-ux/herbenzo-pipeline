@@ -16,7 +16,7 @@ from herbenzo.clients.eutils import EutilsClient, EutilsError
 from herbenzo.clients.llm import LlmClient
 from herbenzo.clients.pubchem_lookup import PubChemLookup, PubChemLookupError
 from herbenzo.config import get_settings
-from herbenzo.services.imppat import ImppatLookup
+from herbenzo.services.imppat import ImppatLookup, approved_context, sole_standardized_part
 from herbenzo.services.candidate_store import CandidateStore
 from herbenzo.services.enrich_parse import (
     gene_from_summary,
@@ -139,14 +139,20 @@ class EnrichmentService:
         )
         chosen_common = (common_name or "").strip() or _first(taxonomy.get("common_names")) or doc.get("query")
         chosen_part = (part_used or "").strip() or (doc.get("part_used") or "").strip() or "unspecified"
-        synonyms = _synonyms_for_registry(doc, chosen_common)
-        rationale = _approval_rationale(doc, marker, note)
+        imppat_row = approved_context(doc.get("imppat") if isinstance(doc.get("imppat"), dict) else None)
+        if chosen_part == "unspecified":
+            imppat_part = sole_standardized_part(doc.get("imppat") if isinstance(doc.get("imppat"), dict) else None)
+            if imppat_part:
+                chosen_part = imppat_part
+        synonyms = _synonyms_for_registry(doc, chosen_common, imppat_row)
+        sanskrit = _sanskrit_for_registry(imppat_row)
+        rationale = _approval_rationale(doc, marker, note, imppat_row)
         approved = {
             "ingredient": {
                 "ingredient_id": ingredient_id,
                 "botanical_name": taxonomy.get("scientific_name") or doc.get("query"),
                 "common_name": chosen_common,
-                "sanskrit_name": None,
+                "sanskrit_name": sanskrit,
                 "synonyms": synonyms,
                 "part_used": chosen_part,
                 "markers": [{"marker_name": marker["name"], "rationale": rationale}],
@@ -155,6 +161,8 @@ class EnrichmentService:
             "source_candidate_id": candidate_id,
             "approved_at": _now(),
         }
+        if imppat_row is not None:
+            approved["imppat"] = imppat_row
         if ingredient_id in _INGREDIENTS:
             raise EnrichmentError(f"{ingredient_id} is a stock registry id", code="id_collision")
         save_approved_document(approved)
@@ -516,7 +524,7 @@ def _claim_ingredient_id(proposed: str | None, scientific_name: str) -> str:
     return allocate_ingredient_id(scientific_name or "NEW", registered)
 
 
-def _approval_rationale(doc: dict, marker: dict, note: str | None) -> str:
+def _approval_rationale(doc: dict, marker: dict, note: str | None, imppat_row: dict | None = None) -> str:
     pubchem = marker.get("pubchem") or {}
     parts = [
         f"Approved enrichment candidate {doc.get('candidate_id')}.",
@@ -531,12 +539,24 @@ def _approval_rationale(doc: dict, marker: dict, note: str | None) -> str:
         parts.append("LLM justification was unavailable.")
     if isinstance(marker.get("llm_rationale"), str) and marker["llm_rationale"].strip():
         parts.append(marker["llm_rationale"].strip()[:300])
+    if imppat_row is not None:
+        parts.append(
+            "Ayurvedic names, parts, and formulation context from IMPPAT 3.0 "
+            "(CC BY-NC-ND 4.0; cite the IMPPAT papers recorded on this row)."
+        )
     if note and note.strip():
         parts.append(note.strip())
     return " ".join(parts)
 
 
-def _synonyms_for_registry(doc: dict, common_name: str | None) -> list[str]:
+def _sanskrit_for_registry(imppat_row: dict | None) -> str | None:
+    if not imppat_row:
+        return None
+    names = [item.strip() for item in imppat_row.get("sanskrit_names") or [] if isinstance(item, str) and item.strip()]
+    return names[0] if names else None
+
+
+def _synonyms_for_registry(doc: dict, common_name: str | None, imppat_row: dict | None = None) -> list[str]:
     taxonomy = doc.get("taxonomy") or {}
     values: list[str] = []
     for item in list(taxonomy.get("synonyms") or []) + list(taxonomy.get("common_names") or []):
@@ -545,7 +565,20 @@ def _synonyms_for_registry(doc: dict, common_name: str | None) -> list[str]:
     query = doc.get("query")
     if isinstance(query, str) and query.strip():
         values.append(query.strip())
+    if imppat_row:
+        sanskrit = [
+            item.strip()
+            for item in imppat_row.get("sanskrit_names") or []
+            if isinstance(item, str) and item.strip()
+        ]
+        extra = sanskrit[1:]
+        for item in list(imppat_row.get("synonyms") or []) + list(imppat_row.get("common_names") or []) + extra:
+            if isinstance(item, str) and item.strip():
+                values.append(item.strip())
     skip = {str(common_name or "").casefold(), str(taxonomy.get("scientific_name") or "").casefold()}
+    primary = _sanskrit_for_registry(imppat_row)
+    if primary:
+        skip.add(primary.casefold())
     out: list[str] = []
     seen: set[str] = set()
     for item in values:
@@ -554,7 +587,7 @@ def _synonyms_for_registry(doc: dict, common_name: str | None) -> list[str]:
             continue
         seen.add(key)
         out.append(item)
-    return out[:12]
+    return out[:24]
 
 
 def _literature_block(term, articles, total, retrieved_at, status="ok", error=None) -> dict[str, Any]:

@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """Download selected IMPPAT 3.0 TSVs into a local gitignored cache.
 
-Standalone. Nothing in the Herbenzo registry, ``GET /ingredients``, or Stage B
-imports this script. The files are CC BY-NC-ND 4.0. Downloading requires
-``--accept-noncommercial-license`` and still does not grant a right to commit,
-redistribute, or use the files in a commercial product.
+Prints the license and attribution notice, then downloads. The batch files
+are not committed. ``--accept-noncommercial-license`` is accepted and ignored
+so older commands still run.
 
 Usage:
-    python scripts/fetch_imppat.py --accept-noncommercial-license
-    python scripts/fetch_imppat.py --accept-noncommercial-license \\
-        --cache-dir ~/.cache/herbenzo/imppat
+    python scripts/fetch_imppat.py
+    python scripts/fetch_imppat.py --cache-dir ~/.cache/herbenzo/imppat
 """
 
 from __future__ import annotations
@@ -26,7 +24,7 @@ DEFAULT_CACHE = REPO_ROOT / "data" / "external" / "imppat" / "cache"
 BASE_URL = "https://cb.imsc.res.in/imppat/images/Batch_Download/"
 USER_AGENT = (
     "herbenzo-imppat-fetch/0.1 "
-    "(local non-commercial evaluation; +https://cb.imsc.res.in/imppat/)"
+    "(local cache; +https://cb.imsc.res.in/imppat/)"
 )
 
 # Taxonomy / formulation / plant-phytochemical tables named for local evaluation.
@@ -40,9 +38,9 @@ CHOSEN_FILES = (
 
 FALLBACK_NOTICE = """\
 IMPPAT is licensed under Creative Commons Attribution-NonCommercial-NoDerivatives
-4.0 International License (http://creativecommons.org/licenses/by-nc-nd/4.0/).
-Do not commit, redistribute, or use the files to build commercial registry rows.
-This notice is not legal advice. See data/external/imppat/LICENSE_NOTICE.md.
+4.0 International License (https://creativecommons.org/licenses/by-nc-nd/4.0/).
+Attribute IMPPAT and cite the three IMPPAT papers. Do not commit or redistribute
+the batch files. See data/external/imppat/LICENSE_NOTICE.md.
 """
 
 
@@ -56,16 +54,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Download selected IMPPAT 3.0 TSVs into a local cache. "
-            "Requires --accept-noncommercial-license. Does not update the registry."
+            "Prints the license notice and does not commit the files."
         )
     )
     parser.add_argument(
         "--accept-noncommercial-license",
         action="store_true",
-        help=(
-            "Confirm you have read data/external/imppat/LICENSE_NOTICE.md and "
-            "are downloading only for local, non-commercial evaluation."
-        ),
+        help="Accepted for compatibility. Does not change the download.",
     )
     parser.add_argument(
         "--cache-dir",
@@ -147,16 +142,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     notice = license_notice_text()
 
-    if not args.accept_noncommercial_license:
-        print(notice, file=sys.stderr)
-        print(
-            "Refusing to download. Re-run with --accept-noncommercial-license "
-            "only for a local, non-commercial evaluation. "
-            "Do not commit or redistribute the files.",
-            file=sys.stderr,
-        )
-        return 2
-
     try:
         names = selected_files(args.only)
     except ValueError as exc:
@@ -165,8 +150,9 @@ def main(argv: list[str] | None = None) -> int:
 
     print(notice)
     print(
-        "Local cache only. The download is not wired into the registry, "
-        "/ingredients, or Stage B. Do not commit the cache.",
+        "License and attribution notice. "
+        "Files are written only to the local cache and are not committed. "
+        "Do not redistribute the batch files.",
     )
     cache_dir = args.cache_dir.expanduser()
     for name in names:

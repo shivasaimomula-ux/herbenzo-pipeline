@@ -1,10 +1,11 @@
-# IMPPAT 3.0 (local reference only)
+# IMPPAT 3.0
 
 IMPPAT (**Indian Medicinal Plants, Phytochemistry And Therapeutics**) is a
 manually curated database built by the Computational Biology Group at
-The Institute of Mathematical Sciences (IMSc), Chennai. Herbenzo keeps this
-note so a local, non-commercial evaluation can be reproduced. The database
-files themselves are not part of this repository.
+The Institute of Mathematical Sciences (IMSc), Chennai. Stage B uses a local
+copy as advisory context after NCBI Taxonomy, and copies a matched context
+onto an approved registry overlay row. The database files themselves are not
+part of this repository.
 
 - Site: <https://cb.imsc.res.in/imppat/>
 - Downloads: <https://cb.imsc.res.in/imppat/download>
@@ -28,8 +29,8 @@ The link is marked `rel="license"` and points to
 The badge alt text is "Creative Commons License".
 Legal code: <https://creativecommons.org/licenses/by-nc-nd/4.0/legalcode>.
 
-Read [LICENSE_NOTICE.md](LICENSE_NOTICE.md) before downloading anything.
-That notice is **not legal advice**.
+Read [LICENSE_NOTICE.md](LICENSE_NOTICE.md) before downloading. It records the
+usage basis for this repository.
 
 The download page does not add a separate terms-of-use statement. The license
 that applies to the batch files is the footer above. The homepage citation
@@ -41,6 +42,17 @@ The IMPPAT 2.0 paper (ACS Omega, 2023) says the compiled information in
 IMPPAT 2.0 was released under CC BY-NC 4.0. The live 3.0 site footer, checked
 on 6 October 2026, states CC BY-NC-ND 4.0. Treat the current website footer as
 the license for the 3.0 database.
+
+## Usage basis
+
+Herbenzo Ayurvedic and Herbal Pvt Ltd holds MSME registration. The IMPPAT team
+confirmed by email on 6 October 2026 (per the owner; keep that email on file)
+that an MSME entity can use IMPPAT without formal approval. IMPPAT may be used
+directly in this pipeline.
+
+The email covers use, not redistribution. Do not commit the batch files,
+subsets, or a dump of the tables. `scripts/fetch_imppat.py` writes only to the
+gitignored cache.
 
 ## Citation
 
@@ -66,18 +78,13 @@ The homepage citation section
    On 6 October 2026 the site linked this item to
    <https://cb.imsc.res.in/imppat> and listed no journal or DOI.
 
-## Do not commit, redistribute, or productize this data
+Approved overlay rows that carry IMPPAT fields store this source and these
+citations with the row.
 
-CC BY-NC-ND 4.0 withholds commercial use and the sharing of adaptations,
-including sui generis database rights. See the research-use section of
-[LICENSE_NOTICE.md](LICENSE_NOTICE.md).
+## Do not commit or redistribute the batch files
 
-Do not commit IMPPAT files, subsets, or derived tables. Do not redistribute
-them. Do not use them to build commercial registry rows, SKUs, or regulatory
-text without written permission from IMSc.
-
-**Permission status: pending.** This repository has no written permission
-from IMSc.
+The cache directory is gitignored. A missing cache, a missing hit, or an
+ambiguous hit does not block enrichment or approval.
 
 Contact verified on the site: **Areejit Samal**, Computational Biology Group,
 The Institute of Mathematical Sciences (IMSc), Chennai. The homepage
@@ -86,21 +93,23 @@ section links a Cloudflare-protected mailto for Areejit Samal that decodes to
 the same address. The download-page contact line points at
 <https://asamallab.github.io/contact.html>.
 
-## Local, non-commercial download
+## Local download
 
-`scripts/fetch_imppat.py` is a standalone downloader. It is not imported by
-the registry, `GET /ingredients`, or Stage B.
+`scripts/fetch_imppat.py` downloads the four TSVs below. It prints this
+license and attribution notice on every run. `--accept-noncommercial-license`
+is still accepted and does nothing.
 
 ```bash
-python scripts/fetch_imppat.py --accept-noncommercial-license
+python scripts/fetch_imppat.py
 ```
 
-The script prints [LICENSE_NOTICE.md](LICENSE_NOTICE.md) and refuses to
-download until `--accept-noncommercial-license` is present. Files are written
-only to a local cache:
+Files are written only to a local cache:
 
 - default: `data/external/imppat/cache/` (gitignored)
 - override: `--cache-dir ~/.cache/herbenzo/imppat`
+
+When that cache exists, enrichment looks it up after NCBI Taxonomy.
+`HERBENZO_IMPPAT_DIR=off` skips the lookup.
 
 Chosen batch files (under
 `https://cb.imsc.res.in/imppat/images/Batch_Download/`):

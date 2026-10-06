@@ -1184,7 +1184,7 @@ el.input.addEventListener("input", () => {
 el.input.value = JSON.stringify(SAMPLE_SPEC, null, 2);
 
 function imppatLine(block) {
-  if (!block) return "IMPPAT 3.0: not attached. Advisory only.";
+  if (!block) return "IMPPAT 3.0: not attached. A missing lookup does not block approval.";
   const status = block.status || "unavailable";
   const files = (block.files || [])
     .map((file) => file.name)
@@ -1197,7 +1197,7 @@ function imppatLine(block) {
     .filter(Boolean)
     .join(", ");
   const parts = [
-    `IMPPAT 3.0: ${status} (advisory)`,
+    `IMPPAT 3.0: ${status} (does not block approval${status === "matched" ? "; copied onto the approved row with citation" : ""})`,
     files ? `files ${files}` : "",
     block.retrieved_at ? `retrieved ${block.retrieved_at}` : "",
     sanskrit ? `Sanskrit/IAST ${sanskrit}` : "",

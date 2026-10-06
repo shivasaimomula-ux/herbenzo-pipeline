@@ -24,6 +24,7 @@ from herbenzo.services.imppat import (
     SOURCE,
     ImppatLookup,
 )
+from herbenzo.services.overlay import load_approved_documents
 
 _RETRIEVED = "2026-10-06T00:00:00+00:00"
 _TAXONOMY_XML = """<?xml version="1.0" ?>
@@ -309,6 +310,77 @@ def test_settings_imppat_dir_and_disable_switch(monkeypatch: pytest.MonkeyPatch,
     assert get_settings().imppat_dir is None
     monkeypatch.setenv("HERBENZO_IMPPAT_DIR", str(tmp_path))
     assert get_settings().imppat_dir == tmp_path
+
+
+def test_matched_imppat_fields_are_copied_on_approval(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("HERBENZO_REGISTRY_DIR", str(tmp_path / "registry"))
+    cache = tmp_path / "cache"
+    _matched_cache(cache)
+    service = _service(tmp_path / "candidates", cache)
+    doc = service.propose("fakewort")
+    assert doc["imppat"]["status"] == "matched"
+    approved = service.approve(doc["candidate_id"])
+    assert approved["status"] == "approved"
+    rows = load_approved_documents()
+    assert len(rows) == 1
+    overlay = rows[0]
+    assert overlay["imppat"]["source"] == SOURCE
+    assert overlay["imppat"]["license"] == "CC BY-NC-ND 4.0"
+    assert len(overlay["imppat"]["citations"]) == 3
+    assert overlay["imppat"]["formulations"]
+    ingredient = overlay["ingredient"]
+    assert ingredient["sanskrit_name"] in doc["imppat"]["sanskrit_names"]
+    assert ingredient["sanskrit_name"]
+    extras = [name for name in doc["imppat"]["sanskrit_names"] if name != ingredient["sanskrit_name"]]
+    for name in extras:
+        assert name in ingredient["synonyms"]
+    assert "Oldus fakus" in ingredient["synonyms"]
+    assert "IMPPAT 3.0" in ingredient["markers"][0]["rationale"]
+    # Several standardised parts: do not guess one.
+    assert ingredient["part_used"] == "unspecified"
+    listed = TestClient(app).get("/ingredients").json()["ingredients"]
+    row = next(item for item in listed if item["ingredient_id"] == ingredient["ingredient_id"])
+    assert row["sanskrit_name"] == ingredient["sanskrit_name"]
+    assert "Oldus fakus" in row["synonyms"]
+
+
+def test_single_imppat_part_fills_an_unspecified_part(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("HERBENZO_REGISTRY_DIR", str(tmp_path / "registry"))
+    cache = tmp_path / "cache"
+    header = (
+        "Formulation_identifier\tFormulation name_in_AFI_original\tIngredient name in AFI_original\t"
+        "Plant part in AFI_original\tPlant_name_standardized\tPlant_part_standardized"
+    )
+    _write(
+        cache,
+        POLY_FILE,
+        header,
+        ["AFI-FAKE-7\tPhony Taila\tPhonyā\tphony root\tFakus exemplaris\tfake root"],
+    )
+    service = _service(tmp_path / "candidates", cache)
+    doc = service.approve(service.propose("fakewort")["candidate_id"])
+    overlay = load_approved_documents()[0]
+    assert overlay["ingredient"]["part_used"] == "fake root"
+    assert overlay["ingredient"]["sanskrit_name"] == "Phonyā"
+    assert overlay["imppat"]["status"] == "matched"
+    assert doc["imppat"]["status"] == "matched"
+
+
+def test_no_match_approval_does_not_invent_imppat_fields(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("HERBENZO_REGISTRY_DIR", str(tmp_path / "registry"))
+    cache = tmp_path / "cache"
+    _write(
+        cache,
+        PLANT_FILE,
+        _PLANT_HEADER,
+        ["FAKEPLANT9999\tOtherus fakeus\tDecoyus plantus\tPlantae\tNopeaceae\tMadeup\tDecoywort\t\tFictional"],
+    )
+    service = _service(tmp_path / "candidates", cache)
+    doc = service.approve(service.propose("fakewort")["candidate_id"])
+    assert doc["imppat"]["status"] == "no_match"
+    overlay = load_approved_documents()[0]
+    assert "imppat" not in overlay
+    assert overlay["ingredient"]["sanskrit_name"] is None
 
 
 def test_standardized_spelling_is_accepted(tmp_path: Path):

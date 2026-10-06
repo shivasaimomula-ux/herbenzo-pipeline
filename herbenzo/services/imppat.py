@@ -1,7 +1,8 @@
 """Optional IMPPAT 3.0 context after NCBI Taxonomy has resolved a binomial.
 
-This step is advisory. A missing cache, a parse failure, no hit, or several
-hits never raises and never blocks candidate approval.
+This step does not block. A missing cache, a parse failure, no hit, or several
+hits never raises and never blocks candidate approval. A single match may be
+copied onto the approved overlay row with source and citation.
 
 Column names were checked on 6 October 2026 from the first rows of the batch
 files at ``https://cb.imsc.res.in/imppat/images/Batch_Download/`` (the download
@@ -38,9 +39,42 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-__all__ = ["ImppatLookup", "SOURCE"]
+__all__ = ["CITATIONS", "ImppatLookup", "SOURCE", "approved_context", "sole_standardized_part"]
 
 SOURCE = "IMPPAT 3.0"
+LICENSE_NAME = "CC BY-NC-ND 4.0"
+LICENSE_URL = "https://creativecommons.org/licenses/by-nc-nd/4.0/"
+
+# Homepage citation block, checked 6 October 2026. IMPPAT 3.0 was listed as submitted.
+CITATIONS: tuple[dict[str, str], ...] = (
+    {
+        "authors": (
+            "Karthikeyan Mohanraj, Bagavathy Shanmugam Karthikeyan, R.P. Vivek-Ananth, "
+            "R.P. Bharath Chand, S.R. Aparna, P. Mangalapandi, and Areejit Samal"
+        ),
+        "title": (
+            "IMPPAT: A curated database of Indian Medicinal Plants, Phytochemistry And Therapeutics"
+        ),
+        "venue": "Scientific Reports 8:4329 (2018)",
+        "url": "https://www.nature.com/articles/s41598-018-22631-z",
+    },
+    {
+        "authors": "R. P. Vivek-Ananth, Karthikeyan Mohanraj, Ajaya Kumar Sahoo, and Areejit Samal",
+        "title": "IMPPAT 2.0: An Enhanced and Expanded Phytochemical Atlas of Indian Medicinal Plants",
+        "venue": "ACS Omega 8:8827–8845 (2023)",
+        "url": "https://pubs.acs.org/doi/10.1021/acsomega.3c00156",
+    },
+    {
+        "authors": (
+            "Shanmuga Priya Baskaran, Ajaya Kumar Sahoo, Priyotosh Sil, Rahul Tiwari, "
+            "Nikhil Chivukula, Sabrina Elsa Eapen, Geetha Ranganathan, Preeti Semwal, "
+            "and Areejit Samal"
+        ),
+        "title": "IMPPAT 3.0: An updated FAIR database of phytochemicals and formulations of Indian Medicinal plants",
+        "venue": "submitted (2026)",
+        "url": "https://cb.imsc.res.in/imppat",
+    },
+)
 
 PLANT_FILE = "Plant_Information_IMPPAT.tsv"
 SINGLE_FILE = "IMPPAT_SingleHerbalFormulations.tsv"
@@ -174,6 +208,54 @@ def _blank_result(status: str, error: str | None, *, files: list[dict[str, str]]
         "phytochemical_count": 0,
         "phytochemicals_truncated": False,
     }
+
+
+def approved_context(block: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Fields safe to copy onto an approved overlay row.
+
+    Only a single unambiguous match is copied. ``no_match``, ``ambiguous``,
+    and ``unavailable`` return ``None`` so approval does not invent names.
+    """
+    if not isinstance(block, dict) or block.get("status") != "matched":
+        return None
+    return {
+        "source": SOURCE,
+        "license": LICENSE_NAME,
+        "license_url": LICENSE_URL,
+        "citations": [dict(item) for item in CITATIONS],
+        "status": "matched",
+        "files": list(block.get("files") or []),
+        "retrieved_at": block.get("retrieved_at"),
+        "sanskrit_names": list(block.get("sanskrit_names") or []),
+        "synonyms": list(block.get("synonyms") or []),
+        "common_names": list(block.get("common_names") or []),
+        "plant_parts": list(block.get("plant_parts") or []),
+        "formulations": list(block.get("formulations") or []),
+        "family": block.get("family"),
+    }
+
+
+def sole_standardized_part(block: dict[str, Any] | None) -> str | None:
+    """One standardised plant part, when the match names exactly one."""
+    context = approved_context(block)
+    if context is None:
+        return None
+    found: list[str] = []
+    seen: set[str] = set()
+    for row in context["plant_parts"]:
+        if not isinstance(row, dict):
+            continue
+        text = row.get("standardized") or row.get("original") or ""
+        if not isinstance(text, str) or not text.strip():
+            continue
+        key = text.strip().casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        found.append(text.strip())
+    if len(found) == 1:
+        return found[0]
+    return None
 
 
 class ImppatLookup:

@@ -1,4 +1,4 @@
-"""License gate for scripts/fetch_imppat.py. No network."""
+"""License notice for scripts/fetch_imppat.py. No network."""
 
 from __future__ import annotations
 
@@ -19,39 +19,25 @@ def _load():
     return module
 
 
-def test_refuses_download_without_license_flag(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    module = _load()
+class _Response:
+    status = 200
 
-    def _boom(*_args, **_kwargs):
-        raise AssertionError("network must not run without --accept-noncommercial-license")
+    def __init__(self) -> None:
+        self._payload = b"plant_id\tname\n"
 
-    monkeypatch.setattr(module.urllib.request, "urlopen", _boom)
+    def read(self, _n: int = -1) -> bytes:
+        payload, self._payload = self._payload, b""
+        return payload
 
-    assert module.main([]) == 2
-    err = capsys.readouterr().err
-    assert "Refusing to download" in err
-    assert "Attribution-NonCommercial-NoDerivatives" in err
+    def __enter__(self) -> "_Response":
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        return False
 
 
-def test_license_flag_reaches_downloader_without_network(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    module = _load()
+def _install_fake_download(monkeypatch: pytest.MonkeyPatch, module):
     calls: list[str] = []
-
-    class _Response:
-        status = 200
-
-        def __init__(self) -> None:
-            self._payload = b"plant_id\tname\n"
-
-        def read(self, _n: int = -1) -> bytes:
-            payload, self._payload = self._payload, b""
-            return payload
-
-        def __enter__(self) -> "_Response":
-            return self
-
-        def __exit__(self, *_exc: object) -> bool:
-            return False
 
     def _fake_urlopen(request, timeout=0):
         calls.append(request.full_url)
@@ -59,7 +45,37 @@ def test_license_flag_reaches_downloader_without_network(monkeypatch: pytest.Mon
         return _Response()
 
     monkeypatch.setattr(module.urllib.request, "urlopen", _fake_urlopen)
+    return calls
 
+
+def test_download_prints_notice_without_the_old_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _load()
+    calls = _install_fake_download(monkeypatch, module)
+    code = module.main([
+        "--cache-dir",
+        str(tmp_path),
+        "--only",
+        "Plant_Information_IMPPAT.tsv",
+    ])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "Attribution-NonCommercial-NoDerivatives" in out
+    assert "https://creativecommons.org/licenses/by-nc-nd/4.0/" in out or (
+        "creativecommons.org/licenses/by-nc-nd/4.0" in out
+    )
+    assert "Refusing to download" not in out
+    assert calls == [module.BASE_URL + "Plant_Information_IMPPAT.tsv"]
+    written = tmp_path / "Plant_Information_IMPPAT.tsv"
+    assert written.read_bytes() == b"plant_id\tname\n"
+
+
+def test_old_license_flag_is_a_noop_alias(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _load()
+    calls = _install_fake_download(monkeypatch, module)
     code = module.main([
         "--accept-noncommercial-license",
         "--cache-dir",
@@ -68,7 +84,7 @@ def test_license_flag_reaches_downloader_without_network(monkeypatch: pytest.Mon
         "Plant_Information_IMPPAT.tsv",
     ])
     assert code == 0
+    err = capsys.readouterr().err
+    assert "Refusing to download" not in err
     assert calls == [module.BASE_URL + "Plant_Information_IMPPAT.tsv"]
-    written = tmp_path / "Plant_Information_IMPPAT.tsv"
-    assert written.read_bytes() == b"plant_id\tname\n"
-    assert not (tmp_path / "Plant_Information_IMPPAT.tsv.partial").exists()
+    assert (tmp_path / "Plant_Information_IMPPAT.tsv").is_file()
