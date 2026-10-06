@@ -22,6 +22,7 @@ from typing import Any, Callable
 from herbenzo.clients.ayush_portal import (
     AYUSH_PORTAL_FUNCTION,
     AYUSH_PORTAL_TOOL,
+    RECORD_ENDPOINT,
     SEARCH_ENDPOINT,
     AyushPortalClient,
     compact_hit,
@@ -35,7 +36,36 @@ __all__ = [
     "attribution_line",
     "ayush_portal_search",
     "ayush_portal_tool_schema",
+    "ayush_public_record",
+    "ayush_public_search",
+    "public_hit",
 ]
+
+_PUBLIC_KEYS = (
+    "arp_id",
+    "title",
+    "journal",
+    "year",
+    "authors",
+    "pmid",
+    "doi",
+    "publisher_url",
+    "category",
+    "system",
+    "evidence_grade",
+    "record_url",
+    "citation",
+    "confidence",
+    "review_status",
+    "cross_check_source",
+    "attribution",
+    "source",
+    "endpoint",
+    "retrieved_at",
+    "license_basis",
+    "permission_ref",
+)
+_GAP_KEYS = ("pmid", "doi", "system", "category", "evidence_grade", "journal")
 
 SOURCE = "Ayush Research Portal"
 DEFAULT_LICENSE_BASIS = "verbal_authorization"
@@ -88,6 +118,82 @@ def ayush_portal_search(
     if status != "ok":
         return {"status": status or "unavailable", "reason": result.get("reason") or "unavailable"}
     return {"status": "ok", "hits": list(result.get("hits") or [])}
+
+
+def public_hit(record: dict[str, Any]) -> dict[str, Any]:
+    """Bibliographic hit plus citation, review state, and provenance. No abstract."""
+    hit = {key: record.get(key) for key in _PUBLIC_KEYS}
+    for key in _DROPPED_KEYS:
+        hit.pop(key, None)
+    return hit
+
+
+def ayush_public_search(
+    query: str,
+    system: str = "any",
+    category: str = "any",
+    limit: int | None = None,
+    offset: int = 0,
+    *,
+    service: AyushPortalService | None = None,
+) -> dict[str, Any]:
+    """CLI and HTTP search. Richer than the Gemini tool payload, still bibliographic."""
+    try:
+        active = service if service is not None else AyushPortalService.from_settings(get_settings())
+        result = active.search(query, system=system, category=category, limit=limit, offset=offset)
+    except Exception as exc:
+        return {"status": "unavailable", "reason": exc.__class__.__name__, "hits": []}
+    return _present_search(result)
+
+
+def ayush_public_record(arp_id: str, *, service: AyushPortalService | None = None) -> dict[str, Any]:
+    """CLI and HTTP record lookup by ARP id. Raises ``ValueError`` when the id is malformed."""
+    active = service if service is not None else AyushPortalService.from_settings(get_settings())
+    result = active.record_by_arp_id(arp_id)
+    if result.get("status") != "ok" or not isinstance(result.get("record"), dict):
+        return {
+            "status": result.get("status") or "unavailable",
+            "reason": result.get("reason") or "unavailable",
+            "source": SOURCE,
+            "arp_id": (arp_id or "").strip(),
+            "endpoint": result.get("endpoint"),
+            "retrieved_at": result.get("retrieved_at"),
+            "license_basis": result.get("license_basis"),
+            "permission_ref": result.get("permission_ref"),
+            "hit": None,
+        }
+    record = result["record"]
+    return {
+        "status": "ok",
+        "reason": None,
+        "source": SOURCE,
+        "arp_id": record.get("arp_id"),
+        "endpoint": record.get("endpoint") or RECORD_ENDPOINT,
+        "retrieved_at": record.get("retrieved_at"),
+        "license_basis": record.get("license_basis"),
+        "permission_ref": record.get("permission_ref"),
+        "hit": public_hit(record),
+    }
+
+
+def _present_search(result: dict[str, Any]) -> dict[str, Any]:
+    status = result.get("status") or "unavailable"
+    body = {
+        "status": status if status in {"ok", "disabled", "unavailable"} else "unavailable",
+        "reason": result.get("reason"),
+        "source": result.get("source") or SOURCE,
+        "query": result.get("query"),
+        "endpoint": result.get("endpoint"),
+        "retrieved_at": result.get("retrieved_at"),
+        "license_basis": result.get("license_basis"),
+        "permission_ref": result.get("permission_ref"),
+        "hits": [],
+    }
+    if body["status"] != "ok":
+        return body
+    records = result.get("records") if isinstance(result.get("records"), list) else []
+    body["hits"] = [public_hit(row) for row in records if isinstance(row, dict)]
+    return body
 
 
 def ayush_portal_search_from_arguments(
@@ -208,10 +314,11 @@ class AyushPortalService:
         system: str | None = None,
         category: str | None = None,
         limit: int | None = None,
+        offset: int = 0,
     ) -> dict[str, Any]:
         """Stored literature block. Never raises."""
         try:
-            raw = self.client.search(query, system=system, category=category, limit=limit)
+            raw = self.client.search(query, system=system, category=category, limit=limit, offset=offset)
         except Exception as exc:
             return self._failure(query, exc.__class__.__name__)
         status = raw.get("status")
@@ -233,6 +340,62 @@ class AyushPortalService:
             "retrieved_at": retrieved_at,
             "records": records,
             "hits": [compact_hit(record) for record in records],
+            "license_basis": self.license_basis,
+            "permission_ref": self.permission_ref,
+        }
+
+    def record_by_arp_id(self, arp_id: str) -> dict[str, Any]:
+        """Resolve an ARP id through search, then fetch that one record page.
+
+        PMID lives on the search JSON. Year, authors, and the publisher URL
+        live on the HTML page. The page view increments the portal counter.
+        """
+        ident = (arp_id or "").strip()
+        if not _ARP_ID.fullmatch(ident):
+            raise ValueError("arp_id is invalid")
+        try:
+            found = self.client.search(ident, limit=5)
+        except Exception as exc:
+            return self._failure(ident, exc.__class__.__name__)
+        if found.get("status") != "ok":
+            return self._failure(
+                ident,
+                str(found.get("reason") or found.get("status") or "unavailable"),
+                status=found.get("status") or "unavailable",
+            )
+        match = next(
+            (hit for hit in found.get("hits") or [] if isinstance(hit, dict) and hit.get("arp_id") == ident),
+            None,
+        )
+        if match is None:
+            return self._failure(ident, "not_found")
+        try:
+            page = self.client.record(match.get("arp_internal_id"))
+        except Exception as exc:
+            return self._failure(ident, exc.__class__.__name__, endpoint=RECORD_ENDPOINT)
+        if page.get("status") != "ok" or not isinstance(page.get("record"), dict):
+            return self._failure(
+                ident,
+                str(page.get("reason") or page.get("status") or "unavailable"),
+                status=page.get("status") or "unavailable",
+                endpoint=RECORD_ENDPOINT,
+            )
+        merged = _fill_record_gaps(page["record"], match)
+        retrieved_at = str(page.get("retrieved_at") or self._now().isoformat())
+        stored = self._finalize(
+            merged,
+            query=ident,
+            endpoint=RECORD_ENDPOINT,
+            retrieved_at=retrieved_at,
+        )
+        return {
+            "status": "ok",
+            "reason": None,
+            "source": SOURCE,
+            "query": ident,
+            "endpoint": RECORD_ENDPOINT,
+            "retrieved_at": retrieved_at,
+            "record": stored,
             "license_basis": self.license_basis,
             "permission_ref": self.permission_ref,
         }
@@ -410,6 +573,15 @@ class AyushPortalService:
                 for inner, inner_value in list(value.items()):
                     if isinstance(inner_value, str):
                         value[inner] = strip_emails(inner_value)
+
+
+def _fill_record_gaps(page: dict[str, Any], index: dict[str, Any]) -> dict[str, Any]:
+    """Keep the record page, and copy index fields the HTML does not carry."""
+    merged = {key: value for key, value in page.items() if key not in _DROPPED_KEYS}
+    for key in _GAP_KEYS:
+        if not merged.get(key) and index.get(key):
+            merged[key] = index[key]
+    return merged
 
 
 # Re-exported for callers that want the OpenAI wrapper without importing the client.

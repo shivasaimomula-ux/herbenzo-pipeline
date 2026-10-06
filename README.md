@@ -156,7 +156,8 @@ python -m herbenzo.cli run examples/ashwagandha.json -o out/report.json
 | `enrich approve <candidate-id> [--marker NAME]` | Promote a candidate into the registry overlay |
 | `enrich reject <candidate-id> [--reason TEXT]` | Reject a candidate |
 | `suggest-formats <id>…` | Advisory finished-format ranking (does not modernize) |
-| `ayush search "<title keywords>"` | ARP bibliographic search. Off unless `HERBENZO_AYUSH_PORTAL_ENABLED=true` |
+| `ayush search "<title keywords>" [--system ayurveda] [--category clinical] [--limit N] [--offset N]` | ARP bibliographic search. Off unless `HERBENZO_AYUSH_PORTAL_ENABLED=true` |
+| `ayush record <ARP_ID>` | Fetch one record page by ARP id (year, authors, publisher URL; PMID merged from search) |
 | `ayush accept <ARP_ID> [--note TEXT]` | Mark an ARP record with no PMID/DOI as reviewer-accepted |
 
 `--offline` uses only cached descriptors and makes no network calls — use it for
@@ -283,6 +284,15 @@ python -m herbenzo.cli ayush accept ARP_AYU000001 --note "journal checked"
 ```
 
 The same decision is `POST /enrich/ayush/{arp_id}/accept`.
+
+Direct lookup, separate from enrichment:
+
+```bash
+python -m herbenzo.cli ayush search "Withania somnifera" --system ayurveda --limit 5
+python -m herbenzo.cli ayush record ARP_AYU030864
+```
+
+`GET /research/ayush/search?q=Withania%20somnifera&system=ayurveda&category=any&limit=5&offset=0` and `GET /research/ayush/records/{arp_id}` return the same bibliographic hits: citation, confidence, review status, provenance, and attribution. When the switch is off the body is `{"status": "disabled", ...}` and no request is sent. `offset` is the portal row offset (`startPage`). A record lookup searches the ARP id, then fetches that one HTML page, and copies the PMID from the search JSON because the page does not carry it. Publisher URLs that the portal prints as `https: //...` are joined before they are stored. The Review candidates detail shows up to five of these hits, read-only, when a candidate has an `ayush_portal` block.
 
 Every stored record carries `source` `Ayush Research Portal`, the ARP id, record URL, query, endpoint, `retrieved_at` (UTC ISO-8601), PMID/DOI, `cross_check_source` (`pubmed`, `crossref`, `doi`, or `none`), the license basis, the permission reference, and this attribution line:
 

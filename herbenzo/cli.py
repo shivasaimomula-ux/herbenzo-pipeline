@@ -10,6 +10,8 @@
     python -m herbenzo.cli enrich approve c0123456789abcdef
     python -m herbenzo.cli suggest-formats HB-ASHW HB-AMLA --dosage-form avaleha \\
         --product-name Chyawanprash --audience adults
+    python -m herbenzo.cli ayush search "Withania somnifera" --system ayurveda --limit 5
+    python -m herbenzo.cli ayush record ARP_AYU030864
     python -m herbenzo.cli ayush accept ARP_AYU030906 --note "journal checked"
 """
 
@@ -200,14 +202,27 @@ def _cmd_enrich_approve(args) -> int:
 
 
 def _cmd_ayush_search(args) -> int:
-    from herbenzo.services.ayush_portal import ayush_portal_search
+    from herbenzo.services.ayush_portal import ayush_public_search
 
-    result = ayush_portal_search(
+    result = ayush_public_search(
         args.query,
         system=args.system,
         category=args.category,
         limit=args.limit,
+        offset=args.offset,
     )
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def _cmd_ayush_record(args) -> int:
+    from herbenzo.services.ayush_portal import ayush_public_record
+
+    try:
+        result = ayush_public_record(args.arp_id)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     print(json.dumps(result, indent=2))
     return 0
 
@@ -311,12 +326,16 @@ def main(argv: list[str] | None = None) -> int:
 
     ayush = sub.add_parser("ayush", help="Ayush Research Portal bibliographic lookup (off unless enabled)")
     ayush_sub = ayush.add_subparsers(dest="ayush_cmd", required=True)
-    ayush_search = ayush_sub.add_parser("search", help="search ARP titles; prints compact hits or an unavailable result")
+    ayush_search = ayush_sub.add_parser("search", help="search ARP titles; prints hits with citations, or disabled/unavailable")
     ayush_search.add_argument("query")
     ayush_search.add_argument("--system", default="any")
     ayush_search.add_argument("--category", default="any")
     ayush_search.add_argument("--limit", type=int, default=None)
+    ayush_search.add_argument("--offset", type=int, default=0, help="row offset (portal startPage)")
     ayush_search.set_defaults(func=_cmd_ayush_search)
+    ayush_record = ayush_sub.add_parser("record", help="fetch one ARP record page by ARP id")
+    ayush_record.add_argument("arp_id")
+    ayush_record.set_defaults(func=_cmd_ayush_record)
     ayush_accept = ayush_sub.add_parser("accept", help="mark an ARP id reviewer-accepted")
     ayush_accept.add_argument("arp_id")
     ayush_accept.add_argument("--note", default="")

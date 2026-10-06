@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from herbenzo.services.enrichment import (
@@ -123,6 +123,31 @@ async def approve_candidate(candidate_id: str, request: Request):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return doc
+
+
+@router.get("/research/ayush/search")
+def research_ayush_search(
+    q: str = Query(min_length=1, max_length=200),
+    system: str = "any",
+    category: str = "any",
+    limit: int | None = Query(default=None, ge=1, le=25),
+    offset: int = Query(default=0, ge=0, le=5000),
+):
+    """Bibliographic ARP search. ``status: disabled`` when the portal switch is off."""
+    from herbenzo.services.ayush_portal import ayush_public_search
+
+    return ayush_public_search(q, system=system, category=category, limit=limit, offset=offset)
+
+
+@router.get("/research/ayush/records/{arp_id}")
+def research_ayush_record(arp_id: str):
+    """One ARP record page, resolved by ARP id. Does not store an abstract."""
+    from herbenzo.services.ayush_portal import ayush_public_record
+
+    try:
+        return ayush_public_record(arp_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/enrich/ayush/{arp_id}/accept")

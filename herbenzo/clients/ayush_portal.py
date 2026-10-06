@@ -321,8 +321,12 @@ class AyushPortalClient:
         system: str | None = None,
         category: str | None = None,
         limit: int | None = None,
+        offset: int = 0,
     ) -> dict[str, Any]:
-        """Search published records. Never raises. Does not fetch record pages."""
+        """Search published records. Never raises. Does not fetch record pages.
+
+        ``offset`` is the portal's ``startPage`` (a row offset, not a page number).
+        """
         if not self.enabled:
             return self._stopped("disabled", "HERBENZO_AYUSH_PORTAL_ENABLED is false", SEARCH_ENDPOINT)
         text = (query or "").strip()
@@ -338,8 +342,11 @@ class AyushPortalClient:
         capped = self._limit(limit)
         if capped is None:
             return self._stopped("unavailable", "invalid_limit", SEARCH_ENDPOINT)
+        start = self._offset(offset)
+        if start is None:
+            return self._stopped("unavailable", "invalid_offset", SEARCH_ENDPOINT)
         params = {
-            "startPage": 0,
+            "startPage": start,
             "pageLength": capped,
             "Search": text,
             "orderColunm": 1,
@@ -446,6 +453,8 @@ class AyushPortalClient:
     def _limit(self, limit: int | None) -> int | None:
         if limit is None:
             return self.max_results
+        if isinstance(limit, bool):
+            return None
         try:
             value = int(limit)
         except (TypeError, ValueError):
@@ -453,6 +462,19 @@ class AyushPortalClient:
         if value < 1:
             return None
         return min(value, self.max_results, 25)
+
+    def _offset(self, offset: int | None) -> int | None:
+        if offset is None:
+            return 0
+        if isinstance(offset, bool):
+            return None
+        try:
+            value = int(offset)
+        except (TypeError, ValueError):
+            return None
+        if value < 0 or value > 5000:
+            return None
+        return value
 
     def _stopped(
         self,
@@ -567,7 +589,7 @@ def parse_record_html(html: str, *, base_url: str, internal_id: int) -> dict[str
             "volume": _clean_placeholder((fields.get("volume") or {}).get("text")),
             "issue": _clean_placeholder((fields.get("issue") or {}).get("text")),
             "pages": pages,
-            "authors": _clean_placeholder((fields.get("authors") or {}).get("text")),
+            "authors": clean_authors((fields.get("authors") or {}).get("text")),
             "pmid": None,
             "doi": doi,
             "publisher_url": publisher,
@@ -595,6 +617,29 @@ def clean_pmid(value: Any) -> str | None:
     if text is None or not _PMID.fullmatch(text):
         return None
     return text
+
+
+def clean_authors(value: Any) -> str | None:
+    """Author line from a record page.
+
+    The portal sometimes glues the next numbered author onto the previous
+    surname (``Langade 1. Vaishali``). Insert the missing separator.
+    """
+    text = _clean_placeholder(value)
+    if text is None:
+        return None
+    return re.sub(r"(?<=[A-Za-z.)])\s+(?=\d+\.\s)", ", ", text)
+
+
+def normalize_http_url(value: Any) -> str | None:
+    """Publisher URL. The portal sometimes renders ``https: //host/...``."""
+    text = _clean_placeholder(value)
+    if text is None:
+        return None
+    text = re.sub(r"\s+", "", text)
+    if not text.lower().startswith(("http://", "https://")):
+        return None
+    return strip_emails(text) or None
 
 
 def clean_doi(value: Any) -> str | None:
@@ -723,12 +768,10 @@ def _publisher_url(fields: dict[str, dict[str, str | None]]) -> str | None:
     for key, field in fields.items():
         if not key.startswith("url"):
             continue
-        href = field.get("href")
-        if isinstance(href, str) and href.lower().startswith(("http://", "https://")):
-            return strip_emails(href) or None
-        text = _clean_placeholder(field.get("text"))
-        if text and text.lower().startswith(("http://", "https://")):
-            return text
+        for candidate in (field.get("href"), field.get("text")):
+            url = normalize_http_url(candidate)
+            if url:
+                return url
     return None
 
 

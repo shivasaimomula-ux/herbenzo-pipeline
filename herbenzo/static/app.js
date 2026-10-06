@@ -1229,6 +1229,44 @@ function npLine(block) {
   return `${parts.join(" > ") || "No labels"} (${block.source || "NPClassifier"}${when})`;
 }
 
+function safeHttps(url) {
+  const text = String(url || "");
+  return /^https:\/\//i.test(text) ? text : "";
+}
+
+function ayushEvidence(block) {
+  if (!block || typeof block !== "object") return "";
+  const heading = "Ayush Research Portal";
+  if (block.status !== "ok") {
+    const reason = block.reason ? ` — ${block.reason}` : "";
+    return `
+      <article class="taxonomy-block" data-ayush-portal>
+        <h4>${heading}</h4>
+        <p>${escapeHtml(block.status || "unavailable")}${escapeHtml(reason)}</p>
+      </article>`;
+  }
+  const rows = Array.isArray(block.records) && block.records.length ? block.records : block.hits || [];
+  const items = rows
+    .slice(0, 5)
+    .map((hit) => {
+      const href = safeHttps(hit.record_url);
+      const label = escapeHtml(hit.arp_id || "record");
+      const link = href ? `<a href="${escapeHtml(href)}" rel="noreferrer">${label}</a>` : label;
+      const cite = hit.citation && hit.citation.url ? safeHttps(hit.citation.url) : "";
+      const citeLink = cite ? ` · <a href="${escapeHtml(cite)}" rel="noreferrer">${escapeHtml(hit.citation.source || "citation")}</a>` : "";
+      return `<li>${link} ${escapeHtml(hit.title || "")} · ${escapeHtml(hit.journal || "")} · ${escapeHtml(hit.confidence || "")} / ${escapeHtml(hit.review_status || "")}${citeLink}</li>`;
+    })
+    .join("");
+  const attribution = rows[0] && rows[0].attribution ? `<p>${escapeHtml(rows[0].attribution)}</p>` : "";
+  return `
+    <article class="taxonomy-block" data-ayush-portal>
+      <h4>${heading}</h4>
+      <p>${escapeHtml(block.source || heading)} · ${escapeHtml(block.retrieved_at || "")}</p>
+      <ul>${items || "<li>No portal hits.</li>"}</ul>
+      ${attribution}
+    </article>`;
+}
+
 function renderCandidateDetail(doc) {
   const markers = Array.isArray(doc.markers) ? doc.markers : [];
   const markerHtml = markers
@@ -1256,6 +1294,7 @@ function renderCandidateDetail(doc) {
       <p>${escapeHtml(justification.status === "ok" ? justification.narrative || "" : "LLM justification unavailable.")}</p>
       ${pending ? `<div class="actions"><button type="button" class="primary" data-approve-candidate="${escapeHtml(doc.candidate_id)}">Approve</button><button type="button" class="ghost" data-reject-candidate="${escapeHtml(doc.candidate_id)}">Reject</button></div>` : ""}
     </article>
+    ${ayushEvidence(doc.ayush_portal)}
     ${markerHtml}`;
 }
 

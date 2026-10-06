@@ -15,6 +15,7 @@ from herbenzo.api import app
 from herbenzo.clients.ayush_portal import (
     AYUSH_PORTAL_FUNCTION,
     AyushPortalClient,
+    clean_authors,
     clean_doi,
     clean_pmid,
     compact_hit,
@@ -30,6 +31,8 @@ from herbenzo.services.ayush_portal import (
     ayush_portal_search,
     ayush_portal_search_from_arguments,
     ayush_portal_tool_schema,
+    ayush_public_record,
+    ayush_public_search,
 )
 from herbenzo.services.candidate_store import CandidateStore
 from herbenzo.services.enrichment import EnrichmentService
@@ -227,6 +230,76 @@ def test_record_page_strips_email_and_drops_the_abstract():
     assert parsed["publisher_url"] == "https://www.example.org/article/aloe"
     assert parsed["evidence_grade"] == "C"
     assert parsed["arp_id"] == "ARP_AYU030906"
+
+
+def test_spaced_publisher_url_is_joined_and_comment_pmid_is_ignored():
+    html = (FIX / "record_spaced_url.html").read_text(encoding="utf-8")
+    parsed = parse_record_html(html, base_url="https://arp.ayush.gov.in", internal_id=29505)
+    assert parsed is not None
+    assert parsed["publisher_url"] == "https://www.example.org/article/aloe"
+    assert parsed["pmid"] is None
+    assert parsed["authors"] == "1. Deepak Langade, 1. Vaishali Thakare, 2. Subodh Kanchi"
+    assert parsed["year"] == "2021"
+    assert parsed["doi"] == "10.1016/j.jep.2020.113276"
+    assert "22557103" not in json.dumps(parsed)
+    assert "ABSTRACT_TOKEN_SHOULD_NOT_PERSIST" not in json.dumps(parsed)
+    assert clean_authors("1. Deepak Langade 1. Vaishali Thakare") == "1. Deepak Langade, 1. Vaishali Thakare"
+
+
+def test_offset_is_the_portal_start_page():
+    transport = Scripted([_search_ok()])
+    client = _client(transport, max_retries=0)
+    result = client.search("Withania somnifera", limit=2, offset=2)
+    assert result["status"] == "ok"
+    assert "startPage=2" in transport.calls[0]
+    assert "pageLength=2" in transport.calls[0]
+    assert client.search("Withania somnifera", offset=-1)["reason"] == "invalid_offset"
+
+
+def test_record_by_arp_id_merges_pmid_from_search(tmp_path: Path):
+    transport = Scripted([_search_ok(), (200, _bytes("record_spaced_url.html")), (200, b"[]")])
+    service, scripted, pubmed = _service(transport, tmp_path, min_interval_s=0, max_retries=0)
+    result = ayush_public_record("ARP_AYU030906", service=service)
+    assert result["status"] == "ok"
+    assert len(scripted.calls) == 2
+    assert "getFilter_Search_data_home1" in scripted.calls[0]
+    assert "Search=ARP_AYU030906" in scripted.calls[0]
+    assert "View_Res_Landing_Url" in scripted.calls[1]
+    assert "rp6=31408" in scripted.calls[1]
+    hit = result["hit"]
+    assert hit["pmid"] == "38479038"
+    assert hit["citation"]["url"] == "https://pubmed.ncbi.nlm.nih.gov/38479038/"
+    assert hit["confidence"] == "verified"
+    assert hit["review_status"] == "not_required"
+    assert hit["publisher_url"] == "https://www.example.org/article/aloe"
+    assert hit["year"] == "2021"
+    assert hit["authors"].startswith("1. Deepak Langade,")
+    assert hit["system"] == "ayurveda"
+    assert hit["attribution"].startswith("Source: Ayush Research Portal")
+    assert pubmed.pmids == ["38479038"]
+    blob = json.dumps(result)
+    assert "abstract" not in blob
+    assert "@" not in blob
+    missing = ayush_public_record("ARP_AYU999999", service=service)
+    assert missing["status"] == "unavailable"
+    assert missing["reason"] == "not_found"
+    assert missing["hit"] is None
+
+
+def test_public_search_includes_citation_and_provenance(tmp_path: Path):
+    transport = Scripted([_search_ok()])
+    service, scripted, _pubmed = _service(transport, tmp_path, min_interval_s=0, max_retries=0)
+    result = ayush_public_search("Aloe", system="ayurveda", category="clinical", limit=2, offset=0, service=service)
+    assert result["status"] == "ok"
+    assert result["source"] == SOURCE
+    assert result["license_basis"] == "verbal_authorization"
+    assert "startPage=0" in scripted.calls[0]
+    hit = result["hits"][0]
+    assert hit["arp_id"] == "ARP_AYU030906"
+    assert hit["citation"]["source"] == "PubMed"
+    assert hit["confidence"] == "verified"
+    assert hit["attribution"].startswith("Source: Ayush Research Portal")
+    assert "abstract" not in hit
 
 
 def test_citations_pubmed_doi_and_reviewer_accept(tmp_path: Path):
@@ -611,6 +684,26 @@ def test_cli_and_api_accept(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cap
     assert main(["ayush", "search", "Triphala"]) == 0
     searched = json.loads(capsys.readouterr().out)
     assert searched["status"] == "disabled"
+    assert searched["hits"] == []
+    assert main(["ayush", "record", "ARP_AYU030906"]) == 0
+    recorded = json.loads(capsys.readouterr().out)
+    assert recorded["status"] == "disabled"
+    assert recorded["hit"] is None
+    assert main(["ayush", "record", "not-an-id"]) == 2
+    assert "invalid" in capsys.readouterr().err
+
+    client = TestClient(app)
+    disabled_search = client.get("/research/ayush/search", params={"q": "Triphala"})
+    assert disabled_search.status_code == 200, disabled_search.text
+    assert disabled_search.json()["status"] == "disabled"
+    disabled_record = client.get("/research/ayush/records/ARP_AYU030906")
+    assert disabled_record.status_code == 200, disabled_record.text
+    assert disabled_record.json()["status"] == "disabled"
+    assert client.get("/research/ayush/records/not-an-id").status_code == 422
+    assert client.get("/research/ayush/search").status_code == 422
+    health = client.get("/health").json()
+    assert health["endpoints"]["ayush_search"].startswith("GET /research/ayush/search")
+    assert "records" in health["endpoints"]["ayush_record"]
 
     client = TestClient(app)
     accepted = client.post("/enrich/ayush/ARP_AYU030906/accept", json={"note": "seen the journal"})
@@ -621,12 +714,115 @@ def test_cli_and_api_accept(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cap
     assert rejected.status_code == 422
 
 
+def test_research_routes_return_citations(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("HERBENZO_REGISTRY_DIR", str(tmp_path))
+    transport = Scripted([_search_ok(), _search_ok(), (200, _bytes("record_spaced_url.html"))])
+    service, _scripted, _pubmed = _service(transport, tmp_path, min_interval_s=0, max_retries=0)
+    monkeypatch.setattr(AyushPortalService, "from_settings", lambda settings=None, **kwargs: service)
+    client = TestClient(app)
+    searched = client.get(
+        "/research/ayush/search",
+        params={"q": "Aloe", "system": "ayurveda", "category": "clinical", "limit": 2, "offset": 0},
+    )
+    assert searched.status_code == 200, searched.text
+    body = searched.json()
+    assert body["status"] == "ok"
+    assert body["hits"][0]["citation"]["pmid"] == "38479038"
+    assert body["hits"][0]["confidence"] == "verified"
+    recorded = client.get("/research/ayush/records/ARP_AYU030906")
+    assert recorded.status_code == 200, recorded.text
+    hit = recorded.json()["hit"]
+    assert hit["year"] == "2021"
+    assert hit["pmid"] == "38479038"
+    assert hit["publisher_url"] == "https://www.example.org/article/aloe"
+    page = client.get("/")
+    assert page.status_code == 200
+    script = client.get("/static/app.js")
+    assert 'data-ayush-portal' in script.text
+    assert "Ayush Research Portal" in script.text
+
+
 @pytest.mark.live
 @pytest.mark.skipif(os.environ.get("HERBENZO_LIVE_TESTS") != "1", reason="set HERBENZO_LIVE_TESTS=1 to call arp.ayush.gov.in")
-def test_live_search_smoke():
-    client = AyushPortalClient(enabled=True, min_interval_s=2.0, max_results=1)
-    result = client.search("ashwagandha", limit=1)
-    assert result["status"] in {"ok", "unavailable"}
-    if result["status"] == "ok":
-        assert result["hits"]
-        assert "abstract" not in result["hits"][0]
+def test_live_search_smoke(tmp_path: Path):
+    from herbenzo.clients.eutils import EutilsClient
+
+    client = AyushPortalClient(enabled=True, min_interval_s=2.0, max_results=3, timeout_s=25, max_retries=1)
+    report: dict[str, object] = {"queries": {}, "filters": {}, "pagination": {}, "record": {}, "pubmed": {}}
+    for query in (
+        "Withania somnifera",
+        "Ashwagandha",
+        "Clitoria ternatea",
+        "Shankhpushpi",
+        "Triphala",
+        "Chyawanprash",
+    ):
+        counted = client.count(query)
+        found = client.search(query, limit=1)
+        assert counted["status"] == "ok", counted
+        assert found["status"] == "ok", found
+        assert counted["count"] >= 1
+        assert found["hits"], query
+        hit = found["hits"][0]
+        assert "abstract" not in hit
+        report["queries"][query] = {
+            "count": counted["count"],
+            "arp_id": hit["arp_id"],
+            "pmid": hit["pmid"],
+            "doi": hit["doi"],
+            "title": hit["title"],
+        }
+    ayurveda = client.count("Withania somnifera", system="ayurveda")
+    clinical = client.search("Ashwagandha", system="ayurveda", category="clinical", limit=1)
+    assert ayurveda["status"] == "ok" and ayurveda["count"] >= 1
+    assert clinical["status"] == "ok" and clinical["hits"]
+    assert clinical["hits"][0]["system"] == "ayurveda"
+    assert clinical["hits"][0]["category"] == "clinical"
+    report["filters"] = {
+        "withania_ayurveda_count": ayurveda["count"],
+        "ashwagandha_clinical": clinical["hits"][0]["arp_id"],
+    }
+    page_one = client.search("Withania somnifera", system="ayurveda", limit=2, offset=0)
+    page_two = client.search("Withania somnifera", system="ayurveda", limit=2, offset=2)
+    assert page_one["status"] == "ok" and page_two["status"] == "ok"
+    first_ids = {hit["arp_id"] for hit in page_one["hits"]}
+    second_ids = {hit["arp_id"] for hit in page_two["hits"]}
+    assert first_ids and second_ids
+    assert first_ids.isdisjoint(second_ids)
+    report["pagination"] = {"offset_0": sorted(first_ids), "offset_2": sorted(second_ids)}
+    sample = next((hit for hit in page_one["hits"] if hit.get("pmid")), None)
+    if sample is None:
+        wider = client.search("Withania somnifera", system="ayurveda", limit=3)
+        assert wider["status"] == "ok", wider
+        sample = next(hit for hit in wider["hits"] if hit.get("pmid"))
+    pubmed = EutilsClient(api_key=None, cache_dir=tmp_path / "eutils", min_interval_s=0.34)
+    service = AyushPortalService(client, pubmed=pubmed, reviews=AyushReviewStore(tmp_path))
+    recorded = service.record_by_arp_id(sample["arp_id"])
+    assert recorded["status"] == "ok", recorded
+    record = recorded["record"]
+    assert record["arp_id"] == sample["arp_id"]
+    assert record["pmid"] == sample["pmid"]
+    assert record["year"]
+    assert record["journal"]
+    assert record["doi"]
+    assert record["publisher_url"] and record["publisher_url"].startswith("https://")
+    assert " " not in record["publisher_url"]
+    assert record["confidence"] == "verified"
+    assert record["cross_check_source"] == "pubmed"
+    assert record["citation"]["url"] == f"https://pubmed.ncbi.nlm.nih.gov/{record['pmid']}/"
+    blob = json.dumps(record)
+    assert "abstract" not in blob
+    assert "@" not in blob
+    report["record"] = {
+        "arp_id": record["arp_id"],
+        "pmid": record["pmid"],
+        "doi": record["doi"],
+        "year": record["year"],
+        "journal": record["journal"],
+        "publisher_url": record["publisher_url"],
+        "confidence": record["confidence"],
+    }
+    summary = pubmed.summary("pubmed", [record["pmid"]])
+    assert any(str(row.get("uid")) == record["pmid"] for row in summary["records"])
+    report["pubmed"] = {"pmid": record["pmid"], "verified": True, "api_key": False}
+    print(json.dumps(report, indent=2))
