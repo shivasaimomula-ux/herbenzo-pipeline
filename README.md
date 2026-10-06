@@ -247,3 +247,5 @@ regulatory content. Compose drafts are local JSON files for the Stage B form
 only — not a product database. The modernize HTTP surface and independent B UI
 are live on `:8003`; the full CLI report path (evidence + adjudication) remains
 available via `python -m herbenzo.cli`.
+
+Local IMPPAT 3.0 reference (not used by the registry, `/ingredients`, or Stage B): [license notice](data/external/imppat/LICENSE_NOTICE.md).
