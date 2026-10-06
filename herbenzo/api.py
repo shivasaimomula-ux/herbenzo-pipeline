@@ -383,8 +383,14 @@ async def modernize(request: Request):
     except (ValidationError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=http_error_detail(exc)) from exc
 
-    known = merged_ingredient_ids()
-    unknown = [ing.ingredient_id for ing in spec.ingredients if ing.ingredient_id not in known]
+    # Ask the engine's registry so a caller-supplied client (and approved
+    # overlay rows) are visible. Collect every miss before raising.
+    unknown: list[str] = []
+    for ing in spec.ingredients:
+        try:
+            _ENGINE.registries.lookup_ingredient(ing.ingredient_id)
+        except UnknownIngredient:
+            unknown.append(ing.ingredient_id)
     if unknown:
         listed = ", ".join(repr(item) for item in unknown)
         exc = UnknownIngredient(
