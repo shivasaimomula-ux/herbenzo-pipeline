@@ -37,19 +37,30 @@ def _cmd_run(args) -> int:
     out.write_text(json.dumps(report, indent=2))
 
     c = report["confidence"]
-    print(f"\n  product        : {report['sku']['product_name']}")
-    print(f"  ingredients    : {len(report['sku']['ingredients'])}")
+    sku = report["sku"]
+    gap = report.get("classical_active_marker_gap")
+    product = sku["product_name"] if sku else (gap or {}).get("product_name", "")
+    n_ingredients = len(sku["ingredients"]) if sku else 0
+    print(f"\n  product        : {product}")
+    print(f"  ingredients    : {n_ingredients}")
     print(f"  confidence     : A={c['inherited_from_A']} "
           f"-> B={c['after_modernization']} -> adjudicated={c['after_adjudication']}")
     print(f"  citations      : {report['citation_summary']}")
+    if gap:
+        print("  indicator      : classical_active_marker_gap (advisory, does not block)")
+        for item in gap.get("ingredients") or []:
+            print(f"                   - {item['ingredient_id']}: {item['reason']}")
     if report["declared_gaps"]:
         print(f"  declared gaps  : {len(report['declared_gaps'])} query/queries with no records")
         for g in report["declared_gaps"]:
             print(f"                   - {g}")
     print(f"\n  BCS classification")
-    for ing in report["sku"]["ingredients"]:
-        print(f"    {ing['marker']['marker_name']:<40s} class {ing['bcs']['bcs_class']:<4s}"
-              f" -> {ing['delivery']['primary']}")
+    if not sku or not sku["ingredients"]:
+        print("    (no marker-backed ingredient)")
+    else:
+        for ing in sku["ingredients"]:
+            print(f"    {ing['marker']['marker_name']:<40s} class {ing['bcs']['bcs_class']:<4s}"
+                  f" -> {ing['delivery']['primary']}")
     print(f"\n  report written : {out}\n")
     return 0
 
