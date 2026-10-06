@@ -71,6 +71,7 @@ class Settings:
     llm_available: bool
     registry_dir: Path
     enrichment_cache_dir: Path
+    imppat_dir: Path | None
 
 
 def get_settings() -> Settings:
@@ -79,6 +80,7 @@ def get_settings() -> Settings:
     llm_key = _blank_to_none(os.environ.get("HERBENZO_LLM_API_KEY"))
     registry = _blank_to_none(os.environ.get("HERBENZO_REGISTRY_DIR"))
     cache = _blank_to_none(os.environ.get("HERBENZO_ENRICHMENT_CACHE_DIR"))
+    imppat = _blank_to_none(os.environ.get("HERBENZO_IMPPAT_DIR"))
     return Settings(
         ncbi_api_key=api_key,
         ncbi_email=_blank_to_none(os.environ.get("NCBI_EMAIL")),
@@ -96,4 +98,21 @@ def get_settings() -> Settings:
         if registry
         else _REPO_ROOT / "herbenzo" / "data" / "registry_overlay",
         enrichment_cache_dir=Path(cache).expanduser() if cache else Path("cache") / "enrichment",
+        imppat_dir=_imppat_dir(imppat),
     )
+
+
+def _imppat_dir(value: str | None) -> Path | None:
+    """Local IMPPAT cache. ``off`` / ``disabled`` / ``none`` turns the step off.
+
+    A relative path is resolved from the repo root so it does not follow the
+    process working directory.
+    """
+    if value is None:
+        return _REPO_ROOT / "data" / "external" / "imppat" / "cache"
+    if value.casefold() in {"off", "disabled", "none"}:
+        return None
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return path
+    return _REPO_ROOT / path
