@@ -51,6 +51,7 @@ class EnrichmentService:
         llm: LlmClient | None = None,
         store: CandidateStore | None = None,
         imppat: ImppatLookup | None = None,
+        ayush: Any | None = None,
     ) -> None:
         self.eutils = eutils if eutils is not None else EutilsClient()
         self.pubchem = pubchem if pubchem is not None else PubChemLookup()
@@ -58,6 +59,7 @@ class EnrichmentService:
         self.llm = llm if llm is not None else LlmClient()
         self.store = store if store is not None else CandidateStore()
         self.imppat = imppat
+        self.ayush = ayush
 
     def propose(
         self,
@@ -78,6 +80,7 @@ class EnrichmentService:
         scientific = taxonomy["scientific_name"] or name
         markers = self._markers(scientific, max_markers=max_markers)
         literature = self._literature(scientific, max_pmids=max_pmids)
+        ayush_portal = self._ayush_portal(scientific)
         genes = self._linked_records("gene", scientific, gene_from_summary, "https://www.ncbi.nlm.nih.gov/gene/")
         proteins = self._linked_records(
             "protein", scientific, protein_from_summary, "https://www.ncbi.nlm.nih.gov/protein/"
@@ -106,6 +109,8 @@ class EnrichmentService:
             "justification": justification,
             "decision": None,
         }
+        if ayush_portal is not None:
+            doc["ayush_portal"] = ayush_portal
         self.store.save(doc)
         return doc
 
@@ -320,6 +325,34 @@ class EnrichmentService:
             int(found["count"]),
             summary.get("retrieved_at") or found["retrieved_at"],
         )
+
+    def _ayush_portal(self, scientific_name: str) -> dict[str, Any] | None:
+        """Optional ARP literature. Off unless the env switch is on or a service is injected.
+
+        A portal failure is stored as ``status: unavailable`` and does not raise.
+        PubMed literature is collected separately and is left in place.
+        """
+        service = self.ayush
+        if service is None:
+            try:
+                settings = get_settings()
+            except Exception:
+                return None
+            if not settings.ayush_portal_enabled:
+                return None
+            try:
+                from herbenzo.services.ayush_portal import AyushPortalService
+
+                service = AyushPortalService.from_settings(settings, pubmed=self.eutils)
+            except Exception as exc:
+                return _ayush_unavailable(scientific_name, exc.__class__.__name__)
+        try:
+            result = service.search(scientific_name)
+        except Exception as exc:
+            return _ayush_unavailable(scientific_name, exc.__class__.__name__)
+        if not isinstance(result, dict):
+            return _ayush_unavailable(scientific_name, "unavailable")
+        return result
 
     def _linked_records(self, db: str, scientific_name: str, parser, url_prefix: str) -> dict[str, Any]:
         term = f"{scientific_name}[Organism]"
@@ -588,6 +621,19 @@ def _synonyms_for_registry(doc: dict, common_name: str | None, imppat_row: dict 
         seen.add(key)
         out.append(item)
     return out[:24]
+
+
+def _ayush_unavailable(query: str, reason: str) -> dict[str, Any]:
+    return {
+        "status": "unavailable",
+        "reason": reason,
+        "source": "Ayush Research Portal",
+        "query": query,
+        "endpoint": "getFilter_Search_data_home1",
+        "retrieved_at": None,
+        "records": [],
+        "hits": [],
+    }
 
 
 def _literature_block(term, articles, total, retrieved_at, status="ok", error=None) -> dict[str, Any]:

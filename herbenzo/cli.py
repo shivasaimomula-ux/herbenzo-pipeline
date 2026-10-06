@@ -10,6 +10,7 @@
     python -m herbenzo.cli enrich approve c0123456789abcdef
     python -m herbenzo.cli suggest-formats HB-ASHW HB-AMLA --dosage-form avaleha \\
         --product-name Chyawanprash --audience adults
+    python -m herbenzo.cli ayush accept ARP_AYU030906 --note "journal checked"
 """
 
 from __future__ import annotations
@@ -198,6 +199,32 @@ def _cmd_enrich_approve(args) -> int:
     return 0
 
 
+def _cmd_ayush_search(args) -> int:
+    from herbenzo.services.ayush_portal import ayush_portal_search
+
+    result = ayush_portal_search(
+        args.query,
+        system=args.system,
+        category=args.category,
+        limit=args.limit,
+    )
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def _cmd_ayush_accept(args) -> int:
+    from herbenzo.config import get_settings
+    from herbenzo.services.ayush_portal import AyushPortalService
+
+    try:
+        decision = AyushPortalService.from_settings(get_settings()).accept(args.arp_id, note=args.note or "")
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(json.dumps(decision, indent=2))
+    return 0
+
+
 def _cmd_enrich_reject(args) -> int:
     try:
         doc = _enrichment().reject(args.candidate_id, reason=args.reason or "")
@@ -281,6 +308,19 @@ def main(argv: list[str] | None = None) -> int:
         help="optional milligrams per serving, repeatable (HB-ASHW=500)",
     )
     s.set_defaults(func=_cmd_suggest_formats)
+
+    ayush = sub.add_parser("ayush", help="Ayush Research Portal bibliographic lookup (off unless enabled)")
+    ayush_sub = ayush.add_subparsers(dest="ayush_cmd", required=True)
+    ayush_search = ayush_sub.add_parser("search", help="search ARP titles; prints compact hits or an unavailable result")
+    ayush_search.add_argument("query")
+    ayush_search.add_argument("--system", default="any")
+    ayush_search.add_argument("--category", default="any")
+    ayush_search.add_argument("--limit", type=int, default=None)
+    ayush_search.set_defaults(func=_cmd_ayush_search)
+    ayush_accept = ayush_sub.add_parser("accept", help="mark an ARP id reviewer-accepted")
+    ayush_accept.add_argument("arp_id")
+    ayush_accept.add_argument("--note", default="")
+    ayush_accept.set_defaults(func=_cmd_ayush_accept)
 
     args = p.parse_args(argv)
     return args.func(args)

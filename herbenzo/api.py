@@ -89,6 +89,7 @@ def _health_payload() -> dict[str, Any]:
             "enrich_candidate": "GET /enrich/candidates/{id}",
             "enrich_approve": "POST /enrich/candidates/{id}/approve",
             "enrich_reject": "POST /enrich/candidates/{id}/reject",
+            "ayush_accept": "POST /enrich/ayush/{arp_id}/accept",
         },
         "enrichment_llm": get_settings().llm_available,
     }

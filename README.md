@@ -156,6 +156,8 @@ python -m herbenzo.cli run examples/ashwagandha.json -o out/report.json
 | `enrich approve <candidate-id> [--marker NAME]` | Promote a candidate into the registry overlay |
 | `enrich reject <candidate-id> [--reason TEXT]` | Reject a candidate |
 | `suggest-formats <id>…` | Advisory finished-format ranking (does not modernize) |
+| `ayush search "<title keywords>"` | ARP bibliographic search. Off unless `HERBENZO_AYUSH_PORTAL_ENABLED=true` |
+| `ayush accept <ARP_ID> [--note TEXT]` | Mark an ARP record with no PMID/DOI as reviewer-accepted |
 
 `--offline` uses only cached descriptors and makes no network calls — use it for
 CI and for reproducible golden-set runs.
@@ -268,6 +270,43 @@ The plant table has no Sanskrit column. Sanskrit/IAST names are read from the AP
 
 IMPPAT is licensed **CC BY-NC-ND 4.0**. Attribute IMPPAT and cite the papers. Do not commit or redistribute the batch files (the cache directory is gitignored). The 6 October 2026 email covers use, not redistribution; keep it on file.
 
+### Ayush Research Portal (opt-in)
+
+The [Ayush Research Portal](https://arp.ayush.gov.in/) (Ministry of Ayush / Ayush Grid; content via NIIMH Hyderabad, CCRAS) is an extra literature source next to PubMed. It is **off by default**. Set `HERBENZO_AYUSH_PORTAL_ENABLED=true` to query the portal's search JSON during enrichment. PubMed literature is unchanged either way. A timeout, HTTP 5xx, non-JSON body, HTML in place of JSON, or a changed payload returns `{status: unavailable, reason}` and enrichment continues. Modernize does not call the portal, and approval does not copy ARP text onto the registry row.
+
+The client stores bibliographic fields only: title, journal, year, volume, issue, pages, authors, PMID, DOI, publisher URL, ARP id, internal id, system, category, evidence grade, and the record URL. Placeholders `NA`, `NI`, and `No` become null. PMID and DOI values are checked (`^\d{5,9}$` and a `10.` DOI). Art-id prefixes are removed from titles. Abstracts are not stored. Corresponding-author emails are stripped at parse time. Record pages are fetched only on demand (`AyushPortalClient.record`); search does not crawl them, because a page view increments the portal's public counter. There is no disk cache and no PDF download. Requests are at least 2 seconds apart, 5xx responses are retried with backoff, and repeated failures open a circuit breaker.
+
+Citation rules: a hit with a PMID is cited as PubMed (the enrichment E-utilities client verifies the id when it is available). A hit with only a DOI is cited as that DOI. Crossref resolution is optional and off unless a resolver is injected. A hit with neither identifier is `confidence: low` and `review_status: needs_review` until a reviewer accepts it:
+
+```bash
+python -m herbenzo.cli ayush accept ARP_AYU000001 --note "journal checked"
+```
+
+The same decision is `POST /enrich/ayush/{arp_id}/accept`.
+
+Every stored record carries `source` `Ayush Research Portal`, the ARP id, record URL, query, endpoint, `retrieved_at` (UTC ISO-8601), PMID/DOI, `cross_check_source` (`pubmed`, `crossref`, `doi`, or `none`), the license basis, the permission reference, and this attribution line:
+
+```text
+Source: Ayush Research Portal, Ministry of Ayush, Government of India — <record URL> (ARP ID <id>), retrieved <date>
+```
+
+The basis defaults to the verbal authorization from CCRAS Deputy Director Srikanth (Delhi, 2026-10-06) that Herbenzo may use the repository for research. The portal's own terms are a liability disclaimer plus a "purely meant for academic purpose" note. See [data/external/ayush_portal/LICENSE_NOTICE.md](data/external/ayush_portal/LICENSE_NOTICE.md). The license fields do not block a lookup. `HERBENZO_AYUSH_PORTAL_ENABLED` is the on/off switch.
+
+Environment (also listed in `.env.example`):
+
+| Variable | Default |
+|---|---|
+| `HERBENZO_AYUSH_PORTAL_ENABLED` | `false` |
+| `HERBENZO_AYUSH_PORTAL_BASE_URL` | `https://arp.ayush.gov.in` |
+| `HERBENZO_AYUSH_PORTAL_MIN_INTERVAL_S` | `2.0` |
+| `HERBENZO_AYUSH_PORTAL_TIMEOUT_S` | `15` |
+| `HERBENZO_AYUSH_PORTAL_MAX_RESULTS` | `10` |
+| `HERBENZO_AYUSH_PORTAL_USER_AGENT` | `herbenzo-pipeline/1.0 (Ayush Research Portal bibliographic lookup; research use)` |
+| `HERBENZO_AYUSH_PORTAL_LICENSE_BASIS` | `verbal_authorization` |
+| `HERBENZO_AYUSH_PORTAL_PERMISSION_REF` | CCRAS Deputy Director Srikanth, Delhi, 2026-10-06; research use permitted for Herbenzo Ayurvedic and Herbal Pvt Ltd |
+
+A later Gemini function-calling front door can register `ayush_portal_tool_schema()` and dispatch `ayush_portal_search` (`herbenzo.services.ayush_portal`). The tool name is `ayush_portal_search`. Parameters are `query`, `system`, `category`, and `limit`. The tool returns compact hits and no abstracts. `status: disabled` or `status: unavailable` means the caller should keep using PubMed and web search.
+
 The **Review candidates** tab is separate from the Compose picker. It does not add unapproved herbs to the formulation.
 
 ## Layout
@@ -282,6 +321,8 @@ The **Review candidates** tab is separate from the Compose picker. It does not a
 | `herbenzo/clients/llm.py` | Optional OpenAI-compatible justification. Skipped when no key is set |
 | `herbenzo/services/enrichment.py` | Propose → enrich → approve/reject |
 | `herbenzo/services/imppat.py` | Optional local IMPPAT 3.0 context after NCBI Taxonomy |
+| `herbenzo/clients/ayush_portal.py` | Opt-in Ayush Research Portal JSON/HTML client (no disk cache) |
+| `herbenzo/services/ayush_portal.py` | ARP citations, license provenance, reviewer accept, `ayush_portal_search` tool |
 | `herbenzo/config.py` | Loads repo-root `.env` without overriding existing environment variables |
 | `herbenzo/services/evidence.py` | Evidence store + manifest stamps over the shared cache |
 | `herbenzo/services/adjudication.py` | Citation adjudication service |

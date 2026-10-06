@@ -44,6 +44,12 @@ class RejectBody(BaseModel):
     reason: str = Field(default="", max_length=500)
 
 
+class AyushAcceptBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    note: str = Field(default="", max_length=500)
+
+
 def service() -> EnrichmentService:
     return build_enrichment_service()
 
@@ -117,6 +123,23 @@ async def approve_candidate(candidate_id: str, request: Request):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return doc
+
+
+@router.post("/enrich/ayush/{arp_id}/accept")
+def accept_ayush_record(arp_id: str, body: AyushAcceptBody | None = None):
+    """Record a reviewer acceptance for one Ayush Research Portal id.
+
+    Does not fetch the portal. Later searches apply the decision to records
+    that have neither a PMID nor a DOI.
+    """
+    from herbenzo.config import get_settings
+    from herbenzo.services.ayush_portal import AyushPortalService
+
+    note = body.note if body is not None else ""
+    try:
+        return AyushPortalService.from_settings(get_settings()).accept(arp_id, note=note)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/enrich/candidates/{candidate_id}/reject")
