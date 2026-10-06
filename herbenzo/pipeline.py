@@ -51,15 +51,36 @@ class Pipeline:
     # -- main entry point ---------------------------------------------------
 
     def run(self, spec: FormulationSpec | dict, max_refs_per_claim: int = 4) -> dict:
-        sku = self.engine.modernize(spec)
-        # Shared-package outbound gate (Audit Finding #1 / Task T6).
-        from herbenzo.contract_gate import validate_outbound_modernized_sku
-
-        validate_outbound_modernized_sku(sku)
+        local_spec = spec if isinstance(spec, FormulationSpec) else FormulationSpec.model_validate(spec)
+        sku = self.engine.modernize(local_spec)
+        # Advisory only. Never an input to confidence penalties below.
+        marker_gap = self.engine.classical_active_marker_gap
         started = _now()
 
         claims: list[dict] = []
         gaps: list[str] = []
+
+        if sku is None:
+            # Classical preparation, no registry marker on any ingredient.
+            # Evidence and adjudication have nothing marker-backed to attach
+            # to; the run still finishes and reports the indicator.
+            confidence = round(float(local_spec.confidence), 4)
+            return self._report(
+                started=started,
+                sku_payload=None,
+                marker_gap=marker_gap,
+                inherited=local_spec.confidence,
+                after_modernization=confidence,
+                after_adjudication=confidence,
+                claims=claims,
+                gaps=gaps,
+            )
+
+        # Shared-package outbound gate (Audit Finding #1 / Task T6).
+        # The indicator is not part of this payload.
+        from herbenzo.contract_gate import validate_outbound_modernized_sku
+
+        validate_outbound_modernized_sku(sku)
 
         for ing in sku.ingredients:
             marker = ing.marker.marker_name
@@ -117,6 +138,29 @@ class Pipeline:
                 })
 
         confidence = self._apply_penalties(sku, claims)
+        return self._report(
+            started=started,
+            sku_payload=json.loads(sku.model_dump_json()),
+            marker_gap=marker_gap,
+            inherited=sku.inherited_confidence,
+            after_modernization=sku.confidence,
+            after_adjudication=confidence,
+            claims=claims,
+            gaps=gaps,
+        )
+
+    def _report(
+        self,
+        *,
+        started: str,
+        sku_payload: dict | None,
+        marker_gap: dict | None,
+        inherited: float,
+        after_modernization: float,
+        after_adjudication: float,
+        claims: list[dict],
+        gaps: list[str],
+    ) -> dict:
         return {
             "manifest": {
                 "pipeline_version": PIPELINE_VERSION,
@@ -127,11 +171,12 @@ class Pipeline:
                 "literature_current_as_of": self.evidence.literature_current_as_of(),
                 "retracted_sources_seen": self.evidence.retracted_pmids(),
             },
-            "sku": json.loads(sku.model_dump_json()),
+            "sku": sku_payload,
+            "classical_active_marker_gap": marker_gap,
             "confidence": {
-                "inherited_from_A": sku.inherited_confidence,
-                "after_modernization": sku.confidence,
-                "after_adjudication": confidence,
+                "inherited_from_A": inherited,
+                "after_modernization": after_modernization,
+                "after_adjudication": after_adjudication,
                 "rule": "may only decrease at each stage",
             },
             "claims": claims,
@@ -169,6 +214,7 @@ class Pipeline:
 
     @staticmethod
     def _apply_penalties(sku: ModernizedSKU, claims: list[dict]) -> float:
+        # classical_active_marker_gap is intentionally not a penalty input.
         conf = sku.confidence
         for c in claims:
             if c["verdict"] == Verdict.REJECT:

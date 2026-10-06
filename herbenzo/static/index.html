@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,500;7..72,700&family=Sora:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/format_suggestions.css" />
 </head>
 <body>
   <div class="atmosphere" aria-hidden="true"></div>
@@ -15,7 +16,7 @@
     <header class="brand">
       <p class="brand-mark">Herbenzo</p>
       <h1>Stage B · Modernizer</h1>
-      <p class="lede">Compose a FormulationSpec, or paste JSON, then modernize on :8003 and inspect the ModernizedSKU.</p>
+      <p class="lede">Compose a polyherbal FormulationSpec, or paste JSON, then modernize on :8003 and inspect the ModernizedSKU.</p>
     </header>
 
     <section class="input-panel" aria-labelledby="input-heading">
@@ -24,6 +25,7 @@
         <div class="mode-tabs" role="tablist" aria-label="How to provide a FormulationSpec">
           <button type="button" class="tab" id="tab-compose" role="tab" aria-selected="true" aria-controls="compose-panel">Compose</button>
           <button type="button" class="tab" id="tab-raw" role="tab" aria-selected="false" aria-controls="raw-panel">Advanced / Raw JSON</button>
+          <button type="button" class="tab" id="tab-review" role="tab" aria-selected="false" aria-controls="review-panel">Review candidates</button>
         </div>
       </div>
 
@@ -48,7 +50,7 @@
           </label>
           <label class="field">
             Product name
-            <input id="product-name" type="text" autocomplete="off" placeholder="Ashwagandha Root Extract" />
+            <input id="product-name" type="text" autocomplete="off" placeholder="Chyawanprash" />
           </label>
           <label class="field">
             Finished form
@@ -95,12 +97,40 @@
         <div class="subhead">
           <h3>Ingredients</h3>
           <div class="actions">
-            <button type="button" class="ghost" id="load-sample-compose">Load sample</button>
-            <button type="button" class="ghost" id="add-ingredient">Add ingredient</button>
+            <button type="button" class="ghost" id="load-sample-compose">Load ashwagandha</button>
+            <button type="button" class="ghost" id="load-triphala">Load Triphala</button>
+            <button type="button" class="ghost" id="add-ingredient">Add empty row</button>
           </div>
         </div>
-        <p class="hint">Amount is milligrams per serving. Botanical name, common name, and part come from the registry row.</p>
+        <p class="hint">Product name is the formulation (Chyawanprash, Triphala), not one herb. Search the registry and add every herb. Each row keeps its own part, amount, extract ratio, and marker. Options come only from <code>GET /ingredients</code>. Pending enrichment candidates are not listed.</p>
+        <div class="picker">
+          <label class="field">
+            Search registry
+            <input id="ingredient-search" type="search" placeholder="Search common name, botanical name, or HB id" autocomplete="off" />
+          </label>
+          <ul id="ingredient-suggest" class="suggest" hidden></ul>
+          <div id="ingredient-chips" class="chips" aria-live="polite"></div>
+        </div>
         <div id="ingredient-editors" class="ing-editors"></div>
+
+        <section id="format-suggestions" class="format-suggestions" aria-labelledby="format-suggestions-heading">
+          <div class="subhead">
+            <h3 id="format-suggestions-heading">Suggested modern formats</h3>
+            <button type="button" class="ghost" id="refresh-formats">Refresh suggestions</button>
+          </div>
+          <p class="hint">Advisory only. Ranked for every ingredient currently selected. Choosing a card fills the finished-form field and does not change the modernizer.</p>
+          <label class="field format-audience">
+            Audience
+            <select id="format-audience">
+              <option value="">No preference</option>
+              <option value="kids">Kids</option>
+              <option value="teens">Teens</option>
+              <option value="adults">Adults</option>
+              <option value="elderly">Elderly</option>
+            </select>
+          </label>
+          <div id="format-suggestion-cards" class="format-cards" aria-live="polite"></div>
+        </section>
 
         <details class="raw preview" open>
           <summary>FormulationSpec preview</summary>
@@ -112,6 +142,26 @@
           <button type="button" class="ghost" id="edit-json">Edit as JSON</button>
           <p class="hint">POST <code>/modernize</code> · same origin</p>
         </div>
+      </div>
+
+      <div id="review-panel" role="tabpanel" aria-labelledby="tab-review" hidden>
+        <p class="hint">Propose a species, then approve or reject the evidence bundle. Approval writes a curated <code>HB-*</code> row. Until then the herb is absent from the Compose picker and Stage B returns 422.</p>
+        <div class="field-grid">
+          <label class="field">
+            Species or common name
+            <input id="enrich-query" type="text" autocomplete="off" placeholder="Bacopa monnieri" />
+          </label>
+          <label class="field">
+            Part (optional)
+            <input id="enrich-part" type="text" autocomplete="off" placeholder="herb" />
+          </label>
+        </div>
+        <div class="run-row">
+          <button type="button" class="primary" id="enrich-propose">Propose candidate</button>
+          <button type="button" class="ghost" id="enrich-refresh">Refresh list</button>
+        </div>
+        <div id="candidate-list" class="candidate-list"></div>
+        <div id="candidate-detail" class="candidate-detail"></div>
       </div>
 
       <div id="raw-panel" role="tabpanel" aria-labelledby="tab-raw" hidden>
@@ -149,5 +199,6 @@
     </section>
   </main>
   <script src="/static/app.js"></script>
+  <script src="/static/format_suggestions.js"></script>
 </body>
 </html>

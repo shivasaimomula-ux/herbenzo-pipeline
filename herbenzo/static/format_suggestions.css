@@ -1,0 +1,86 @@
+.format-suggestions {
+  margin-top: 1.15rem;
+  padding-top: 0.2rem;
+}
+
+.format-audience {
+  max-width: 16rem;
+  margin: 0.35rem 0 0.75rem;
+}
+
+.format-cards {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.format-empty,
+.format-error {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+}
+
+.format-error {
+  color: var(--warn-ink);
+  white-space: pre-wrap;
+}
+
+.format-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.75rem 0.8rem 0.85rem;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--ink);
+  font-weight: 400;
+}
+
+.format-card:hover {
+  border-color: var(--accent);
+}
+
+.format-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.4rem 0.8rem;
+}
+
+.format-card-head strong {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.format-score {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--accent-deep);
+}
+
+.format-card p,
+.format-card ul {
+  margin: 0.35rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.format-card ul {
+  padding-left: 1.1rem;
+}
+
+.format-card a {
+  color: var(--accent-deep);
+}
+
+.format-kicker {
+  margin: 0.15rem 0 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}

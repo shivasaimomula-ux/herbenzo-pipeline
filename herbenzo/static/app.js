@@ -21,13 +21,57 @@ const SAMPLE_SPEC = {
   ],
 };
 
+const TRIPHALA_SPEC = {
+  formulation_id: "F-TRIP-001",
+  product_name: "Triphala Churna",
+  dosage_form: "powder",
+  target_market: "EU",
+  servings_per_day: 2,
+  confidence: 0.8,
+  ingredients: [
+    {
+      ingredient_id: "HB-HARI",
+      botanical_name: "Terminalia chebula",
+      common_name: "Haritaki",
+      part_used: "pericarp of fruit",
+      quantity_mg: 1000,
+    },
+    {
+      ingredient_id: "HB-BIBH",
+      botanical_name: "Terminalia bellirica",
+      common_name: "Bibhitaki",
+      part_used: "pericarp of fruit",
+      quantity_mg: 1000,
+    },
+    {
+      ingredient_id: "HB-AMLA",
+      botanical_name: "Phyllanthus emblica",
+      common_name: "Amalaki",
+      part_used: "fruit",
+      quantity_mg: 1000,
+    },
+  ],
+};
+
 const MARKETS = ["US", "EU", "NZ", "AU", "IN", "UK", "CA"];
 
 const el = {
   tabCompose: document.getElementById("tab-compose"),
   tabRaw: document.getElementById("tab-raw"),
+  tabReview: document.getElementById("tab-review"),
   composePanel: document.getElementById("compose-panel"),
   rawPanel: document.getElementById("raw-panel"),
+  reviewPanel: document.getElementById("review-panel"),
+  ingredientSearch: document.getElementById("ingredient-search"),
+  ingredientSuggest: document.getElementById("ingredient-suggest"),
+  ingredientChips: document.getElementById("ingredient-chips"),
+  loadTriphala: document.getElementById("load-triphala"),
+  enrichQuery: document.getElementById("enrich-query"),
+  enrichPart: document.getElementById("enrich-part"),
+  enrichPropose: document.getElementById("enrich-propose"),
+  enrichRefresh: document.getElementById("enrich-refresh"),
+  candidateList: document.getElementById("candidate-list"),
+  candidateDetail: document.getElementById("candidate-detail"),
   draftName: document.getElementById("draft-name"),
   saveDraft: document.getElementById("save-draft"),
   newDraft: document.getElementById("new-draft"),
@@ -117,6 +161,9 @@ function formatErrorDetail(detail) {
     } else if (errList && typeof errList === "object") {
       parts.push(JSON.stringify(errList, null, 2));
     }
+    if (Array.isArray(detail.unknown_ids) && detail.unknown_ids.length) {
+      parts.push(`Unknown ingredient id: ${detail.unknown_ids.join(", ")}`);
+    }
     if (parts.length) return parts.join("\n");
     return JSON.stringify(detail, null, 2);
   }
@@ -143,14 +190,16 @@ function writeRawFromCompose() {
 }
 
 function showTab(which) {
-  const compose = which === "compose";
-  if (!compose && composeTouched && !rawDirty) {
+  if (which === "raw" && composeTouched && !rawDirty) {
     writeRawFromCompose();
   }
-  el.composePanel.hidden = !compose;
-  el.rawPanel.hidden = compose;
-  el.tabCompose.setAttribute("aria-selected", compose ? "true" : "false");
-  el.tabRaw.setAttribute("aria-selected", compose ? "false" : "true");
+  el.composePanel.hidden = which !== "compose";
+  el.rawPanel.hidden = which !== "raw";
+  el.reviewPanel.hidden = which !== "review";
+  el.tabCompose.setAttribute("aria-selected", which === "compose" ? "true" : "false");
+  el.tabRaw.setAttribute("aria-selected", which === "raw" ? "true" : "false");
+  el.tabReview.setAttribute("aria-selected", which === "review" ? "true" : "false");
+  if (which === "review") loadCandidates();
 }
 
 function blankIngredient() {
@@ -326,7 +375,105 @@ function buildSpec() {
 
 function updatePreview() {
   renumberCards();
+  renderChips();
   el.specPreview.textContent = JSON.stringify(buildSpec(), null, 2);
+}
+
+function selectedIngredientIds() {
+  return new Set(readIngredients().map((ing) => ing.ingredient_id).filter(Boolean));
+}
+
+function filteredRegistry(query) {
+  const q = query.trim().toLowerCase();
+  const selected = selectedIngredientIds();
+  return registry
+    .filter((row) => {
+      if (selected.has(row.ingredient_id)) return false;
+      if (!q) return true;
+      const hay = [
+        row.ingredient_id,
+        row.botanical_name,
+        row.common_name,
+        row.sanskrit_name,
+        ...(row.synonyms || []),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    })
+    .slice(0, 8);
+}
+
+function renderSuggestions() {
+  if (!el.ingredientSuggest || !el.ingredientSearch) return;
+  const matches = filteredRegistry(el.ingredientSearch.value);
+  if (!el.ingredientSearch.value.trim() || !matches.length) {
+    el.ingredientSuggest.hidden = true;
+    el.ingredientSuggest.innerHTML = "";
+    return;
+  }
+  el.ingredientSuggest.hidden = false;
+  el.ingredientSuggest.innerHTML = matches
+    .map((row) => {
+      const label = `${row.common_name || row.botanical_name} — ${row.botanical_name} (${row.ingredient_id})`;
+      return `<li><button type="button" data-add-id="${escapeHtml(row.ingredient_id)}">${escapeHtml(label)}</button></li>`;
+    })
+    .join("");
+}
+
+function renderChips() {
+  if (!el.ingredientChips) return;
+  const rows = readIngredients().filter((ing) => ing.ingredient_id);
+  if (!rows.length) {
+    el.ingredientChips.innerHTML = `<p class="draft-empty">No herbs selected yet. Search the registry to add several.</p>`;
+    return;
+  }
+  el.ingredientChips.innerHTML = rows
+    .map((ing) => {
+      const rec = registryById.get(ing.ingredient_id);
+      const label = rec ? rec.common_name || rec.botanical_name : ing.ingredient_id;
+      return `<button type="button" class="chip" data-chip="${escapeHtml(ing.ingredient_id)}">${escapeHtml(label)} <span aria-hidden="true">×</span></button>`;
+    })
+    .join("");
+}
+
+function addRegistryIngredient(id) {
+  const rec = registryById.get(id);
+  if (!rec) return;
+  if (selectedIngredientIds().has(id)) {
+    setStatus("ok", `${rec.common_name || id} is already in this formulation.`);
+    return;
+  }
+  const cards = [...el.ingredientEditors.querySelectorAll(".ing-editor")];
+  const onlyBlank = cards.length === 1 && !cards[0].querySelector(".ing-id").value;
+  if (onlyBlank) cards[0].remove();
+  el.ingredientEditors.insertAdjacentHTML(
+    "beforeend",
+    cardHtml({
+      ingredient_id: id,
+      botanical_name: rec.botanical_name,
+      common_name: rec.common_name,
+      part_used: rec.part_used,
+      quantity_mg: "",
+    })
+  );
+  composeTouched = true;
+  updatePreview();
+  const last = el.ingredientEditors.querySelector(".ing-editor:last-child .qty");
+  if (last) last.focus();
+}
+
+function removeIngredient(id) {
+  const cards = [...el.ingredientEditors.querySelectorAll(".ing-editor")];
+  for (const card of cards) {
+    if (card.querySelector(".ing-id").value === id) card.remove();
+  }
+  if (!el.ingredientEditors.querySelector(".ing-editor")) {
+    el.ingredientEditors.insertAdjacentHTML("beforeend", cardHtml(blankIngredient()));
+  }
+  composeTouched = true;
+  updatePreview();
 }
 
 function specProblems(spec) {
@@ -917,6 +1064,58 @@ el.addIngredient.addEventListener("click", () => {
   if (select) select.focus();
 });
 
+el.ingredientSearch.addEventListener("input", renderSuggestions);
+el.ingredientSearch.addEventListener("focus", renderSuggestions);
+el.ingredientSearch.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  const matches = filteredRegistry(el.ingredientSearch.value);
+  if (!matches.length) return;
+  event.preventDefault();
+  addRegistryIngredient(matches[0].ingredient_id);
+  el.ingredientSearch.value = "";
+  renderSuggestions();
+});
+el.ingredientSuggest.addEventListener("mousedown", (event) => {
+  const button = event.target.closest("[data-add-id]");
+  if (!button) return;
+  event.preventDefault();
+  addRegistryIngredient(button.dataset.addId);
+  el.ingredientSearch.value = "";
+  renderSuggestions();
+});
+el.ingredientChips.addEventListener("click", (event) => {
+  const chip = event.target.closest("[data-chip]");
+  if (!chip) return;
+  removeIngredient(chip.dataset.chip);
+});
+
+el.loadTriphala.addEventListener("click", () => {
+  currentDraftId = null;
+  fillCompose(TRIPHALA_SPEC);
+  writeRawFromCompose();
+  if (!el.draftName.value.trim()) el.draftName.value = "Triphala";
+  renderDraftList(lastDrafts);
+  setStatus("ok", "Loaded Triphala — three registry ingredients.");
+});
+
+el.tabReview.addEventListener("click", () => showTab("review"));
+el.enrichPropose.addEventListener("click", proposeCandidate);
+el.enrichRefresh.addEventListener("click", () => loadCandidates());
+el.candidateList.addEventListener("click", (event) => {
+  const open = event.target.closest("[data-open-candidate]");
+  const approve = event.target.closest("[data-approve-candidate]");
+  const reject = event.target.closest("[data-reject-candidate]");
+  if (open) loadCandidate(open.dataset.openCandidate);
+  if (approve) decideCandidate(approve.dataset.approveCandidate, "approve");
+  if (reject) decideCandidate(reject.dataset.rejectCandidate, "reject");
+});
+el.candidateDetail.addEventListener("click", (event) => {
+  const approve = event.target.closest("[data-approve-candidate]");
+  const reject = event.target.closest("[data-reject-candidate]");
+  if (approve) decideCandidate(approve.dataset.approveCandidate, "approve");
+  if (reject) decideCandidate(reject.dataset.rejectCandidate, "reject");
+});
+
 el.loadSampleCompose.addEventListener("click", () => {
   currentDraftId = null;
   fillCompose(SAMPLE_SPEC);
@@ -983,6 +1182,173 @@ el.input.addEventListener("input", () => {
   rawDirty = true;
 });
 el.input.value = JSON.stringify(SAMPLE_SPEC, null, 2);
+
+function imppatLine(block) {
+  if (!block) return "IMPPAT 3.0: not attached. A missing lookup does not block approval.";
+  const status = block.status || "unavailable";
+  const files = (block.files || [])
+    .map((file) => file.name)
+    .filter(Boolean)
+    .join(", ");
+  const sanskrit = (block.sanskrit_names || []).slice(0, 6).join(", ");
+  const forms = (block.formulations || [])
+    .slice(0, 4)
+    .map((row) => row.formulation_name || row.formulation_id)
+    .filter(Boolean)
+    .join(", ");
+  const parts = [
+    `IMPPAT 3.0: ${status} (does not block approval${status === "matched" ? "; copied onto the approved row with citation" : ""})`,
+    files ? `files ${files}` : "",
+    block.retrieved_at ? `retrieved ${block.retrieved_at}` : "",
+    sanskrit ? `Sanskrit/IAST ${sanskrit}` : "",
+    forms ? `formulations ${forms}` : "",
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+function taxonomyLine(block) {
+  if (!block) return "No classification retrieved.";
+  if (block.status === "unavailable") return `Unavailable${block.error ? ` — ${block.error}` : ""}`;
+  const levels = ["kingdom", "superclass", "class", "subclass", "direct_parent"]
+    .map((key) => block[key])
+    .filter(Boolean);
+  const when = block.retrieved_at ? ` · retrieved ${block.retrieved_at}` : "";
+  const source = block.source ? `${block.source}${when}` : when;
+  return `${levels.join(" > ") || "No levels"}${source ? ` (${source})` : ""}`;
+}
+
+function npLine(block) {
+  if (!block) return "No NPClassifier result.";
+  if (block.status === "unavailable") return `Unavailable${block.error ? ` — ${block.error}` : ""}`;
+  const parts = [
+    (block.pathway || []).join(", "),
+    (block.superclass || []).join(", "),
+    (block.class || []).join(", "),
+  ].filter(Boolean);
+  const when = block.retrieved_at ? ` · retrieved ${block.retrieved_at}` : "";
+  return `${parts.join(" > ") || "No labels"} (${block.source || "NPClassifier"}${when})`;
+}
+
+function renderCandidateDetail(doc) {
+  const markers = Array.isArray(doc.markers) ? doc.markers : [];
+  const markerHtml = markers
+    .map((marker) => {
+      const chem = marker.chemical_taxonomy || {};
+      const pubchem = marker.pubchem || {};
+      return `
+        <article class="taxonomy-block">
+          <h4>${escapeHtml(marker.name || "marker")}</h4>
+          <p>PubChem CID ${escapeHtml(pubchem.cid ?? "—")} · MW ${escapeHtml(pubchem.molecular_weight ?? "—")} · XLogP ${escapeHtml(pubchem.xlogp ?? "—")}</p>
+          <p>Source: ${escapeHtml(pubchem.source || "PubChem")} · ${escapeHtml(pubchem.retrieved_at || "")}</p>
+          <p>ClassyFire: ${escapeHtml(taxonomyLine(chem.classyfire))}</p>
+          <p>NP Classifier: ${escapeHtml(npLine(chem.npclassifier))}</p>
+          ${marker.llm_rationale ? `<p>${escapeHtml(marker.llm_rationale)}</p>` : ""}
+        </article>`;
+    })
+    .join("");
+  const justification = doc.justification || {};
+  const pending = doc.status === "pending";
+  el.candidateDetail.innerHTML = `
+    <article class="candidate-card">
+      <h3>${escapeHtml(doc.query || "candidate")} · ${escapeHtml(doc.status || "")}</h3>
+      <p>${escapeHtml((doc.taxonomy && doc.taxonomy.scientific_name) || "")} · proposed ${escapeHtml(doc.proposed_ingredient_id || "—")} · not in the Compose picker until approved</p>
+      <p>${escapeHtml(imppatLine(doc.imppat))}</p>
+      <p>${escapeHtml(justification.status === "ok" ? justification.narrative || "" : "LLM justification unavailable.")}</p>
+      ${pending ? `<div class="actions"><button type="button" class="primary" data-approve-candidate="${escapeHtml(doc.candidate_id)}">Approve</button><button type="button" class="ghost" data-reject-candidate="${escapeHtml(doc.candidate_id)}">Reject</button></div>` : ""}
+    </article>
+    ${markerHtml}`;
+}
+
+function renderCandidateList(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) {
+    el.candidateList.innerHTML = `<p class="draft-empty">No enrichment candidates stored.</p>`;
+    return;
+  }
+  el.candidateList.innerHTML = list
+    .map((row) => {
+      const markers = (row.marker_names || []).join(", ");
+      return `
+        <article class="candidate-card">
+          <h3>${escapeHtml(row.query || row.candidate_id)}</h3>
+          <p>${escapeHtml(row.status || "")} · ${escapeHtml(row.proposed_ingredient_id || "no id yet")} · ${escapeHtml(markers || "no markers")}</p>
+          <div class="actions">
+            <button type="button" class="ghost" data-open-candidate="${escapeHtml(row.candidate_id)}">Review</button>
+          </div>
+        </article>`;
+    })
+    .join("");
+}
+
+async function loadCandidates() {
+  const res = await fetch("/enrich/candidates", { headers: { accept: "application/json" } });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    setStatus("error", `Could not load candidates (${res.status})\n${formatErrorDetail(body && body.detail)}`);
+    return;
+  }
+  renderCandidateList((body && body.candidates) || []);
+}
+
+async function loadCandidate(id) {
+  const res = await fetch(`/enrich/candidates/${encodeURIComponent(id)}`, {
+    headers: { accept: "application/json" },
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    setStatus("error", `Could not load candidate (${res.status})\n${formatErrorDetail(body && body.detail)}`);
+    return;
+  }
+  renderCandidateDetail(body);
+}
+
+async function proposeCandidate() {
+  const query = el.enrichQuery.value.trim();
+  if (!query) {
+    setStatus("error", "Enter a species or common name to propose.");
+    return;
+  }
+  const payload = { query };
+  const part = el.enrichPart.value.trim();
+  if (part) payload.part_used = part;
+  const res = await fetch("/enrich/propose", {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    setStatus("error", `Propose failed (${res.status})\n${formatErrorDetail(body && body.detail)}`);
+    return;
+  }
+  renderCandidateDetail(body);
+  await loadCandidates();
+  setStatus("ok", `Stored pending candidate ${body.candidate_id}. It is not in the Compose picker.`);
+}
+
+async function decideCandidate(id, action) {
+  const path = action === "approve" ? "approve" : "reject";
+  const payload = action === "reject" ? { reason: "rejected in review" } : {};
+  const res = await fetch(`/enrich/candidates/${encodeURIComponent(id)}/${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    setStatus("error", `${action} failed (${res.status})\n${formatErrorDetail(body && body.detail)}`);
+    return;
+  }
+  renderCandidateDetail(body);
+  await loadCandidates();
+  if (action === "approve") {
+    await loadIngredients();
+    const decided = body.decision && body.decision.ingredient_id;
+    setStatus("ok", `Approved ${decided || id}. It is now on GET /ingredients.`);
+  } else {
+    setStatus("ok", `Rejected ${id}. It stays out of the Compose picker.`);
+  }
+}
 
 async function boot() {
   try {

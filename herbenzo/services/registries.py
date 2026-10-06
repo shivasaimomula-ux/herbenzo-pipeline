@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 from dataclasses import dataclass, field
 from typing import Protocol
 
 from herbenzo.schemas.contracts import PhysicochemicalProfile
+from herbenzo.services.overlay import load_approved_documents
 
 _DATA = pathlib.Path(__file__).resolve().parent.parent / "data" / "marker_properties.json"
 
@@ -30,7 +32,10 @@ __all__ = [
     "MarkerRecord", "IngredientRecord", "RegistriesClient",
     "StaticRegistriesClient", "UnknownIngredient", "UnknownMarker",
     "normalize_extract_ratio", "marker_dose_mg", "reconcile_percentages",
+    "iter_registry_records", "merged_ingredient_ids", "merged_ingredients",
 ]
+
+_OVERLAY_ID = re.compile(r"^HB-[A-Z0-9]{3,16}$")
 
 
 class UnknownIngredient(KeyError):
@@ -160,6 +165,86 @@ for _rec in _INGREDIENTS.values():
             _SYNONYM_INDEX[_name.strip().lower()] = _rec.ingredient_id
 
 
+def _record_from_overlay(doc: dict) -> IngredientRecord | None:
+    ing = doc.get("ingredient")
+    if not isinstance(ing, dict):
+        return None
+    ingredient_id = ing.get("ingredient_id")
+    if not isinstance(ingredient_id, str) or not _OVERLAY_ID.fullmatch(ingredient_id):
+        return None
+    if ingredient_id in _INGREDIENTS:
+        return None
+    botanical = ing.get("botanical_name")
+    common = ing.get("common_name")
+    part = ing.get("part_used")
+    if not isinstance(botanical, str) or not botanical.strip():
+        return None
+    if not isinstance(common, str) or not common.strip():
+        return None
+    if not isinstance(part, str) or not part.strip():
+        return None
+    markers: list[MarkerRecord] = []
+    for raw in ing.get("markers") or []:
+        if not isinstance(raw, dict):
+            continue
+        marker_name = raw.get("marker_name")
+        rationale = raw.get("rationale")
+        if isinstance(marker_name, str) and marker_name.strip() and isinstance(rationale, str) and rationale.strip():
+            markers.append(MarkerRecord(marker_name.strip(), rationale.strip()))
+    if not markers:
+        return None
+    synonyms = tuple(
+        item.strip()
+        for item in (ing.get("synonyms") or [])
+        if isinstance(item, str) and item.strip()
+    )
+    sanskrit = ing.get("sanskrit_name")
+    return IngredientRecord(
+        ingredient_id=ingredient_id,
+        botanical_name=botanical.strip(),
+        common_name=common.strip(),
+        sanskrit_name=sanskrit.strip() if isinstance(sanskrit, str) and sanskrit.strip() else None,
+        synonyms=synonyms,
+        part_used=part.strip(),
+        markers=tuple(markers),
+    )
+
+
+def iter_registry_records() -> list[IngredientRecord]:
+    """Stock rows, then approved overlay rows. Pending candidates are excluded."""
+    records = list(_INGREDIENTS.values())
+    seen = {rec.ingredient_id for rec in records}
+    extra: list[IngredientRecord] = []
+    for doc in load_approved_documents():
+        rec = _record_from_overlay(doc)
+        if rec is None or rec.ingredient_id in seen:
+            continue
+        extra.append(rec)
+        seen.add(rec.ingredient_id)
+    extra.sort(key=lambda rec: rec.ingredient_id)
+    return records + extra
+
+
+def merged_ingredients() -> dict[str, IngredientRecord]:
+    return {rec.ingredient_id: rec for rec in iter_registry_records()}
+
+
+def merged_ingredient_ids() -> set[str]:
+    return set(merged_ingredients())
+
+
+def _overlay_properties() -> dict[str, dict]:
+    found: dict[str, dict] = {}
+    for doc in load_approved_documents():
+        props = doc.get("properties")
+        if not isinstance(props, dict):
+            continue
+        for name, row in props.items():
+            if isinstance(name, str) and isinstance(row, dict) and name not in found:
+                found[name] = row
+    return found
+
+
 class RegistriesClient(Protocol):
     """Interface consumed by the modernizer engine."""
 
@@ -176,34 +261,43 @@ class StaticRegistriesClient:
         self._props: dict[str, dict] = json.loads((data_path or _DATA).read_text())
 
     def lookup_ingredient(self, ingredient_id: str) -> IngredientRecord:
-        try:
-            return _INGREDIENTS[ingredient_id]
-        except KeyError as exc:
+        rec = merged_ingredients().get(ingredient_id)
+        if rec is None:
             raise UnknownIngredient(
                 f"{ingredient_id!r} is not in the ingredient registry; "
                 "resolve botanical identity before modernization"
-            ) from exc
+            )
+        return rec
 
     def resolve_identity(self, name: str) -> str:
         """Map a botanical/common/Sanskrit synonym to the canonical ingredient ID."""
-        try:
-            return _SYNONYM_INDEX[name.strip().lower()]
-        except KeyError as exc:
-            raise UnknownIngredient(f"no registry entry matching {name!r}") from exc
+        key = name.strip().lower()
+        found = _SYNONYM_INDEX.get(key)
+        if found:
+            return found
+        for rec in iter_registry_records():
+            names = (rec.botanical_name, rec.common_name, rec.sanskrit_name, *rec.synonyms)
+            if any(item and item.strip().lower() == key for item in names):
+                return rec.ingredient_id
+        raise UnknownIngredient(f"no registry entry matching {name!r}")
 
     def lookup_marker(self, ingredient_id: str) -> MarkerRecord:
         rec = self.lookup_ingredient(ingredient_id)
         if not rec.markers:
+            # Classical dosage forms report this gap as a non-blocking
+            # indicator instead of calling lookup_marker. Other forms still
+            # fail here — an empty marker list is not guessed into a compound.
             raise UnknownMarker(f"no standardization marker assigned for {ingredient_id!r}")
         return rec.markers[0]
 
     def get_physicochemical_properties(self, marker_name: str) -> PhysicochemicalProfile:
-        try:
-            row = self._props[marker_name]
-        except KeyError as exc:
+        row = self._props.get(marker_name)
+        if row is None:
+            row = _overlay_properties().get(marker_name)
+        if row is None:
             raise UnknownMarker(
                 f"no retrieved descriptor record for marker {marker_name!r}"
-            ) from exc
+            )
         return PhysicochemicalProfile(
             pubchem_cid=row["pubchem_cid"],
             molecular_weight=row["molecular_weight"],

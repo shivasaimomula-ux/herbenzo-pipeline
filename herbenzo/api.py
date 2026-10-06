@@ -19,12 +19,17 @@ from pathlib import Path
 from secrets import token_hex
 from typing import Any
 
+from herbenzo.config import get_settings, load_project_env
+
+load_project_env()
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 from herbenzo.components.modernizer.modernizer import ENGINE_VERSION, ModernizerEngine
+from herbenzo.enrich_api import router as enrich_router
 from herbenzo.contract_gate import (
     attach_provenance_thread,
     http_error_detail,
@@ -32,10 +37,12 @@ from herbenzo.contract_gate import (
     validate_inbound_formulation_spec,
     validate_outbound_modernized_sku,
 )
+from herbenzo.format_suggestions import suggest_from_payload
 from herbenzo.services.registries import (
     UnknownIngredient,
     UnknownMarker,
-    _INGREDIENTS,
+    iter_registry_records,
+    merged_ingredient_ids,
 )
 from herbenzo_contracts import CONTRACT_SCHEMA_VERSION
 
@@ -50,7 +57,7 @@ app = FastAPI(
     version="1.0.0",
     description=(
         "Deterministic FormulationSpec → ModernizedSKU service. "
-        "No LLM. Independent UI at GET /."
+        "The modernize path does not call an LLM. Independent UI at GET /."
     ),
 )
 
@@ -73,10 +80,17 @@ def _health_payload() -> dict[str, Any]:
             "health": "/health",
             "modernize": "POST /modernize",
             "ingredients": "GET /ingredients",
+            "suggest_formats": "POST /suggest-formats",
             "drafts": "GET/POST /drafts",
             "draft": "GET/DELETE /drafts/{id}",
             "static": "/static/",
+            "enrich_propose": "POST /enrich/propose",
+            "enrich_candidates": "GET /enrich/candidates",
+            "enrich_candidate": "GET /enrich/candidates/{id}",
+            "enrich_approve": "POST /enrich/candidates/{id}/approve",
+            "enrich_reject": "POST /enrich/candidates/{id}/reject",
         },
+        "enrichment_llm": get_settings().llm_available,
     }
 
 
@@ -111,7 +125,8 @@ def _spec_is_complete(spec: dict[str, Any]) -> bool:
         parsed = validate_inbound_formulation_spec(spec)
     except (ValidationError, ValueError, TypeError):
         return False
-    return all(ing.ingredient_id in _INGREDIENTS for ing in parsed.ingredients)
+    known = merged_ingredient_ids()
+    return all(ing.ingredient_id in known for ing in parsed.ingredients)
 
 
 def _ingredient_count(spec: Any) -> int:
@@ -221,8 +236,8 @@ def health():
 
 @app.get("/ingredients")
 def ingredients():
-    """Stock registry rows the modernizer already uses. Read-only."""
-    return {"ingredients": [_ingredient_row(rec) for rec in _INGREDIENTS.values()]}
+    """Stock rows plus approved overlay rows. Pending enrichment candidates are omitted."""
+    return {"ingredients": [_ingredient_row(rec) for rec in iter_registry_records()]}
 
 
 @app.get("/drafts")
@@ -308,9 +323,47 @@ def delete_draft(draft_id: str):
     return {"deleted": True, "id": draft_id}
 
 
+@app.post("/suggest-formats")
+async def suggest_formats(request: Request):
+    """Advisory finished-format ranking for one or more ingredient ids.
+
+    Does not run the modernizer and does not change a ModernizedSKU. Unknown
+    registry ids return 422 ``unknown_ingredient``, same as ``/modernize``.
+    """
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=http_error_detail(ValueError("Request body must be JSON")),
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=422,
+            detail=http_error_detail(ValueError("Request body must be a JSON object")),
+        )
+
+    try:
+        return suggest_from_payload(payload)
+    except (UnknownIngredient, UnknownMarker) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=http_error_detail(exc, code="unknown_ingredient"),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=http_error_detail(exc)) from exc
+
+
 @app.post("/modernize")
 async def modernize(request: Request):
-    """Validate FormulationSpec → ModernizerEngine.modernize → ModernizedSKU."""
+    """Validate FormulationSpec → ModernizerEngine.modernize → ModernizedSKU.
+
+    A classical preparation whose registry row has no active marker does not
+    422. When some ingredients still have markers, the body is that
+    ModernizedSKU plus ``classical_active_marker_gap``. When none do, the body
+    is ``{"sku": null, "classical_active_marker_gap": ...}``.
+    """
     try:
         payload = await request.json()
     except Exception as exc:
@@ -330,9 +383,43 @@ async def modernize(request: Request):
     except (ValidationError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=http_error_detail(exc)) from exc
 
+    # Ask the engine's registry so a caller-supplied client (and approved
+    # overlay rows) are visible. Collect every miss before raising.
+    unknown: list[str] = []
+    for ing in spec.ingredients:
+        try:
+            _ENGINE.registries.lookup_ingredient(ing.ingredient_id)
+        except UnknownIngredient:
+            unknown.append(ing.ingredient_id)
+    if unknown:
+        listed = ", ".join(repr(item) for item in unknown)
+        exc = UnknownIngredient(
+            f"{listed} is not in the ingredient registry; "
+            "resolve botanical identity before modernization"
+        )
+        detail = dict(http_error_detail(exc, code="unknown_ingredient"))
+        detail["error"] = "unknown_ingredient"
+        detail["unknown_ids"] = unknown
+        if not all(item in str(detail.get("message") or "") for item in unknown):
+            detail["message"] = str(exc)
+        raise HTTPException(status_code=422, detail=detail)
+
     try:
         # Engine uses local schemas; strip shared-only fields at the boundary.
         sku = _ENGINE.modernize(to_engine_payload(spec))
+        # Read after modernize. Not a contract field — herbenzo-contracts does
+        # not declare it. Attached below only once outbound validation has
+        # passed, and only when the indicator actually fired.
+        marker_gap = _ENGINE.classical_active_marker_gap
+        if sku is None:
+            # No marker-backed ingredient. Do not 422 and do not invent a SKU.
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "sku": None,
+                    "classical_active_marker_gap": marker_gap,
+                },
+            )
         outbound = validate_outbound_modernized_sku(sku)
         outbound = attach_provenance_thread(spec, outbound)
     except (UnknownIngredient, UnknownMarker) as exc:
@@ -343,7 +430,11 @@ async def modernize(request: Request):
     except (ValidationError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=http_error_detail(exc)) from exc
 
-    return JSONResponse(content=outbound.model_dump(mode="json"))
+    body = outbound.model_dump(mode="json")
+    if marker_gap is not None:
+        body["classical_active_marker_gap"] = marker_gap
+    return JSONResponse(content=body)
 
 
+app.include_router(enrich_router)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

@@ -26,6 +26,8 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 # herbenzo-contracts: local Desktop path (see requirements.txt) or
 #   pip install "git+https://github.com/shivasaimomula-ux/herbenzo-contracts.git"
+# Optional. Fills the gitignored IMPPAT cache used after NCBI Taxonomy.
+python scripts/fetch_imppat.py
 
 uvicorn herbenzo.api:app --host 0.0.0.0 --port 8003
 ```
@@ -36,12 +38,12 @@ Open the **independent Stage B UI** in a browser:
 http://127.0.0.1:8003/
 ```
 
-**Compose** (default tab) builds a FormulationSpec without hand-editing JSON:
+**Compose** (default tab) builds a FormulationSpec without hand-editing JSON. `herbenzo-contracts` `FormulationSpec.ingredients` is already a list, so a polyherbal formula (Triphala, Chyawanprash) is one product name plus many registry rows. This repo does not add a `role` field; the shared ingredient object has part, amount, extract ratio, and marker.
 
-1. Set formulation id, product name, finished form (preset or any free text), market, servings per day, and confidence.
-2. Pick one or more registry ingredients. Botanical name, common name, and part fill from that row. Enter **amount as mg per serving** (`quantity_mg`). Extract ratio (`10:1`) and a standardization marker + percent are optional.
-3. The **FormulationSpec preview** is the JSON that will be posted.
-4. **Run Modernize** calls the existing `POST /modernize` and renders the ModernizedSKU. Advisory flags on the response (including `classical_active_marker_gap`, if a response includes it) show as a banner. They are not errors. Unknown ingredient ids still return **422**.
+1. Set formulation id, product name (the formula, not a single herb), finished form (preset or any free text), market, servings per day, and confidence.
+2. Search the registry and add every herb. The picker reads **only** `GET /ingredients` (stock rows plus approved overlay rows). Each selected row has its own part, amount (mg per serving), extract ratio, and standardization marker. Pending enrichment candidates are not in that list.
+3. The **FormulationSpec preview** is the JSON that will be posted, including every selected `ingredient_id`.
+4. **Run Modernize** calls the existing `POST /modernize` and renders the ModernizedSKU. Advisory flags on the response (including `classical_active_marker_gap`, if a response includes it) show as a banner. They are not errors. Any unknown ingredient id still returns **422** (`unknown_ingredient`) and the response names that id.
 
 **Advanced / Raw JSON** is the previous paste-or-upload path.
 
@@ -66,6 +68,12 @@ This UI is Stage B only — not embedded in C/E. It does not change the Moderniz
 | `GET` | `/drafts/{id}` | Load one draft (`spec` is the saved form) |
 | `DELETE` | `/drafts/{id}` | Delete a draft |
 | `POST` | `/modernize` | Body: `FormulationSpec` (herbenzo-contracts) → `ModernizedSKU` |
+| `POST` | `/enrich/propose` | Resolve a species into a **pending** evidence bundle. Not added to the registry |
+| `GET` | `/enrich/candidates` | List candidates (`?status=pending\|approved\|rejected`) |
+| `GET` | `/enrich/candidates/{id}` | Evidence bundle, including chemical taxonomy |
+| `POST` | `/enrich/candidates/{id}/approve` | Promote one PubChem-backed marker to a curated `HB-*` overlay row |
+| `POST` | `/enrich/candidates/{id}/reject` | Record a rejection. The id stays unknown to Stage B |
+| `POST` | `/suggest-formats` | Advisory finished-format ranking for a list of ingredient ids. Does not change `/modernize` |
 
 ```bash
 curl -s http://127.0.0.1:8003/health | python3 -m json.tool
@@ -76,7 +84,49 @@ curl -s -X POST http://127.0.0.1:8003/modernize \
 
 Unknown fields / raised confidence floors → **422** with `herbenzo-contracts`
 `validation_error_body`. Unknown registry ingredient IDs → **422**
-(`unknown_ingredient`).
+(`unknown_ingredient`), and the response lists every bad id. The same unknown-id
+gate applies to `POST /suggest-formats`. A classical preparation with no registry
+marker does **not** 422: `POST /modernize` returns 200 and, when any ingredient
+still has a marker, the ModernizedSKU plus `classical_active_marker_gap`. When
+none do, the body is `{ "sku": null, "classical_active_marker_gap": { ... } }`.
+
+### Suggested modern formats (advisory)
+
+`POST /suggest-formats` ranks finished formats for one or more registry ingredient
+ids. The body is `ingredient_ids` (or `ingredients`) plus optional `audience`,
+`dosage_form`, `product_name`, and `quantities_mg`. Ranking is a curated catalog
+(`herbenzo/data/modern_formats.json`) plus fixed rules. It does not call an LLM
+and it does not change BCS, delivery, or the ModernizedSKU.
+
+The suggestion is **not** added to the `/modernize` body. `herbenzo-contracts`
+models reject unknown fields (`extra="forbid"`), so an extra key on that
+response would fail any consumer that re-validates the payload as a
+ModernizedSKU. Use the separate endpoint.
+
+Catalog references include static regulatory citations checked on 6 Oct 2026:
+the FSSAI Nutra Regulations 2022 direction (clause 5(1)) on gummy, jelly,
+chewable, mouth-dissolving strip, and bar formats; FDA nanomaterials guidance
+and the EMA nanomedicines hub on nanoemulsion and conventional emulsion; and
+the FDA Inactive Ingredient Database for excipient precedent. When ashwagandha
+or turmeric is selected, each suggestion also cites that herb's EMA HMPC
+monograph. No monograph was verified for the other registry herbs. Each
+suggestion also carries prebuilt evidence-search URLs for Europe PMC, the NIH
+DSLD `search-filter` query, and the Health Canada LNHPD advanced-search page.
+Those URLs are strings only. Ranking does not call them. LNHPD has no
+documented free-text ingredient query, so that link is not prefilled.
+
+For a Chyawanprash-like or other classical name (`chyawanprash`, `avaleha`,
+`lehya`, `churna`, and the other tokens in `CLASSICAL_TOKENS`), nanoemulsion
+stays in the ranked list. It is strongly down-ranked and carries an explicit
+owner caution; gummy and soft chew receive a preference bonus.
+
+The Compose tab shows a **Suggested modern formats** panel. A card click fills
+the free-string finished-form field. Advanced / Raw JSON is unchanged.
+
+```bash
+python -m herbenzo.cli suggest-formats HB-AMLA HB-PIPL HB-ASHW \
+  --dosage-form avaleha --product-name Chyawanprash --audience adults
+```
 ---
 
 ## CLI quick start
@@ -99,7 +149,13 @@ python -m herbenzo.cli run examples/ashwagandha.json -o out/report.json
 |---|---|
 | `run <spec.json> [-o out.json] [--offline]` | Full pipeline; writes an auditable report |
 | `adjudicate --pmid … --subject … --claim … [--domain safety]` | Adjudicate a single citation |
-| `markers` | List registry ingredients, markers and PubChem CIDs |
+| `markers` | List registry ingredients (stock plus approved overlay), markers and PubChem CIDs |
+| `enrich propose "<species or common name>" [--part root]` | Store a pending enrichment candidate |
+| `enrich list [--status pending]` | List candidates |
+| `enrich show <candidate-id>` | Print one evidence bundle |
+| `enrich approve <candidate-id> [--marker NAME]` | Promote a candidate into the registry overlay |
+| `enrich reject <candidate-id> [--reason TEXT]` | Reject a candidate |
+| `suggest-formats <id>…` | Advisory finished-format ranking (does not modernize) |
 
 `--offline` uses only cached descriptors and makes no network calls — use it for
 CI and for reproducible golden-set runs.
@@ -134,6 +190,16 @@ implemented and tested, not asserted.
    statement in a downstream document resolves back to its source and verdict.
 8. **No uncited numbers.** `BioavailabilityEvidence` rejects a `fold_change`
    without PMID, evidence tier and model system.
+9. **Classical preparations without an active marker are advisory.** If the
+   dosage form or product name is a classical Ayurvedic preparation (decoction,
+   lehya, bhasma, churna, and the other form names in
+   `herbenzo/services/classical_marker_gap.py`) **and** an ingredient's registry
+   row has no standardization marker, the pipeline report includes
+   `classical_active_marker_gap` beside `sku`. The indicator does not raise,
+   does not return 422, and does not lower the confidence floor. Marker-backed
+   ingredients are still modernized and adjudicated. No marker chemistry is
+   invented to fill the gap. `herbenzo-contracts` does not yet declare this
+   field; it stays outside the validated ModernizedSKU.
 
 ---
 
@@ -172,6 +238,38 @@ $ python -m herbenzo.cli adjudicate --pmid 37257749 \
 
 ---
 
+## Ingredient enrichment
+
+The stock registry stays the curated `HB-*` table. Enrichment grows it only after a person approves a candidate.
+
+1. **Propose.** `POST /enrich/propose` with a species or common name. NCBI Taxonomy resolves the accepted Latin binomial first. If a local IMPPAT 3.0 cache is present, that binomial and the NCBI synonyms are looked up for Ayurvedic context (see below). The lookup is advisory and never fails the proposal. Candidate marker CIDs come from PubChem (E-utilities `pccompound` search, then PUG-REST properties). PubMed, Gene, and Protein supply citations and organism-linked records. Chemical taxonomy is attached per marker: ClassyFire/ChemOnt kingdom → superclass → class → subclass → direct parent (PubChem classification when it is complete, otherwise the keyless ClassyFire API by InChIKey) and NP Classifier pathway / superclass / class from GNPS when a SMILES string is present. A missing classification is stored as `unavailable`; it does not fail the proposal.
+2. **Enrich.** Physicochemical numbers (molecular weight, XLogP, TPSA, H-bond counts, rotatable bonds, CID) are copied from PubChem with source URL and retrieval time. The optional LLM only ranks the PubChem marker names and writes a justification. If `HERBENZO_LLM_API_KEY` is unset, that step is `unavailable` and the candidate is still stored. Numeric keys in an LLM payload are discarded.
+3. **Gate.** The bundle is a pending JSON file under `herbenzo/data/registry_overlay/candidates/` (`HERBENZO_REGISTRY_DIR` overrides the directory). It does not appear in `GET /ingredients`. Submitting its proposed id to `POST /modernize` returns **422** `unknown_ingredient`.
+4. **Commit.** Approve assigns the proposed `HB-*` id and writes `approved/<id>.json`, including the PubChem descriptor record Stage B needs. A matched IMPPAT block is copied onto that row (Sanskrit/IAST name, synonyms, a single standardised part when the request did not name one, and AFI/API formulation context) with source and citation. A missing or ambiguous IMPPAT hit is not copied and does not block approval. Reject records the decision and does not create a row. After approval, Compose and Stage B treat the row like a stock ingredient.
+
+NCBI E-utilities and PubChem PUG-REST work with no API key (3 requests/second). Set `NCBI_API_KEY` to use 10 requests/second. `NCBI_EMAIL` and `NCBI_TOOL` are sent when set. Copy `.env.example` to `.env` at the repo root; process environment variables win over that file. Do not commit `.env`.
+
+### IMPPAT 3.0 (after NCBI, when the local cache exists)
+
+Herbenzo Ayurvedic and Herbal Pvt Ltd is MSME-registered. The IMPPAT team confirmed by email on 6 October 2026 that an MSME entity can use IMPPAT without formal approval, so the lookup runs whenever `data/external/imppat/cache/` (or `HERBENZO_IMPPAT_DIR`) contains the batch files. Set `HERBENZO_IMPPAT_DIR=off` to skip it. Populate the cache with `python scripts/fetch_imppat.py`. The notice and citation list are in [data/external/imppat/](data/external/imppat/LICENSE_NOTICE.md).
+
+Validation order: NCBI Taxonomy resolves the accepted binomial. Only then, and only when local files are available, IMPPAT adds Ayurvedic context to the enrichment candidate: Sanskrit/IAST ingredient names, original and standardised plant parts, AFI/API formulation context, family, common names, Latin synonyms, and linked phytochemical identifiers when that table is present. The block is stored on the candidate as `imppat` with `source` `IMPPAT 3.0`, the file name, and the file timestamp. The lookup is **non-blocking**. `matched`, `no_match`, `ambiguous`, and `unavailable` all leave the candidate pending and approvable. A missing hit does not return 422. Unknown ingredient ids submitted to `POST /modernize` still return 422, and `GET /ingredients` still lists stock rows plus approved overlay rows only.
+
+On approval of a **matched** candidate, those Ayurvedic fields are copied onto the overlay row together with the CC BY-NC-ND 4.0 source and the three IMPPAT citations. Sanskrit/IAST becomes `sanskrit_name` (further names join synonyms). If the request did not name a plant part and IMPPAT names exactly one standardised part, that part is stored. Formulation context stays on the overlay `imppat` object. An ambiguous or missing hit is not copied.
+
+Enable it by placing these TSVs in `data/external/imppat/cache/`:
+
+- `Plant_Information_IMPPAT.tsv`
+- `IMPPAT_SingleHerbalFormulations.tsv`
+- `IMPPAT_PolyHerbalFormulations.tsv`
+- `IMPPAT_Phytochemical_Plant_Association.tsv` (optional)
+
+The plant table has no Sanskrit column. Sanskrit/IAST names are read from the API formulation title and the AFI ingredient title. Headers were checked against the 30 September 2026 batch files; the loader also accepts `standardized` spellings and ignores unknown columns. An empty, missing, or unreadable cache is `unavailable`.
+
+IMPPAT is licensed **CC BY-NC-ND 4.0**. Attribute IMPPAT and cite the papers. Do not commit or redistribute the batch files (the cache directory is gitignored). The 6 October 2026 email covers use, not redistribution; keep it on file.
+
+The **Review candidates** tab is separate from the Compose picker. It does not add unapproved herbs to the formulation.
+
 ## Layout
 
 | Path | Role |
@@ -179,6 +277,12 @@ $ python -m herbenzo.cli adjudicate --pmid 37257749 \
 | `herbenzo/schemas/contracts.py` | Handoff contracts, confidence floor, citation guards |
 | `herbenzo/clients/pubmed.py` | NCBI E-utilities — search, fetch; shared PMID cache (`herbenzo-pubmed-cache`) |
 | `herbenzo/clients/pubchem.py` | PubChem PUG-REST — CID resolution and descriptors |
+| `herbenzo/clients/eutils.py` | Enrichment E-utilities client (taxonomy, PubMed, gene, protein, pccompound) with NCBI rate limits |
+| `herbenzo/clients/chemclass.py` | ClassyFire/ChemOnt and NP Classifier lookups, cached |
+| `herbenzo/clients/llm.py` | Optional OpenAI-compatible justification. Skipped when no key is set |
+| `herbenzo/services/enrichment.py` | Propose → enrich → approve/reject |
+| `herbenzo/services/imppat.py` | Optional local IMPPAT 3.0 context after NCBI Taxonomy |
+| `herbenzo/config.py` | Loads repo-root `.env` without overriding existing environment variables |
 | `herbenzo/services/evidence.py` | Evidence store + manifest stamps over the shared cache |
 | `herbenzo/services/adjudication.py` | Citation adjudication service |
 | `herbenzo/services/registries.py` | Ingredient identity, markers, dose normalization |
@@ -186,9 +290,12 @@ $ python -m herbenzo.cli adjudicate --pmid 37257749 \
 | `herbenzo/components/modernizer/` | BCS classifier, delivery recommender, orchestrator |
 | `herbenzo/pipeline.py` | End-to-end runner and report builder |
 | `herbenzo/cli.py` | Command line |
-| `herbenzo/api.py` | FastAPI: UI at `/`, `GET /health`, `GET /ingredients`, `/drafts`, `POST /modernize` on `:8003` |
-| `herbenzo/static/` | Independent B UI (compose form, drafts, raw JSON) |
+| `herbenzo/api.py` | FastAPI: UI at `/`, `GET /health`, `GET /ingredients`, `/drafts`, `POST /modernize`, `POST /suggest-formats` on `:8003` |
+| `herbenzo/format_suggestions.py` | Advisory format catalog and ranker (does not change ModernizedSKU) |
+| `herbenzo/data/modern_formats.json` | Finished-format catalog, including checked market pages and static regulatory citations |
+| `herbenzo/static/` | Independent B UI (compose form, drafts, raw JSON, format panel) |
 | `herbenzo/data/compose_drafts/` | On-disk compose drafts (gitignored; created on save) |
+| `herbenzo/data/registry_overlay/` | Pending candidates and approved `HB-*` rows (gitignored; `HERBENZO_REGISTRY_DIR` overrides) |
 | `herbenzo/contract_gate.py` | Shared-package FormulationSpec / ModernizedSKU gates |
 | `cache/` | On-disk response cache — delete to force re-retrieval |
 
@@ -247,3 +354,5 @@ regulatory content. Compose drafts are local JSON files for the Stage B form
 only — not a product database. The modernize HTTP surface and independent B UI
 are live on `:8003`; the full CLI report path (evidence + adjudication) remains
 available via `python -m herbenzo.cli`.
+
+IMPPAT 3.0 local cache and MSME usage basis: [data/external/imppat/](data/external/imppat/README.md).

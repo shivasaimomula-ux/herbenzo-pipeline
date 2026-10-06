@@ -7,8 +7,13 @@ Pipeline: marker resolution → BCS classification → delivery-system selection
 with dose normalization applied per ingredient.
 
 Failure posture: an ingredient that cannot be resolved in the registry raises
-rather than being guessed at. A formulation that fails schema validation is
-rejected at the boundary. Confidence can only fall.
+rather than being guessed at. The one exception is advisory, not a success
+path for chemistry: a classical Ayurvedic preparation whose registry row has
+no standardization marker does not raise and is left off the ModernizedSKU.
+No marker, BCS class, or delivery system is invented for it. The indicator
+is ``engine.classical_active_marker_gap``. A formulation that fails schema
+validation is rejected at the boundary. Confidence can only fall, and the
+indicator itself does not lower it.
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ from herbenzo.schemas.contracts import (
     ModernizedIngredient,
     ModernizedSKU,
 )
+from herbenzo.services.classical_marker_gap import classical_active_marker_gap
 from herbenzo.services.registries import (
     RegistriesClient,
     StaticRegistriesClient,
@@ -50,6 +56,7 @@ class ModernizerEngine:
     ) -> None:
         self.registries: RegistriesClient = registries or StaticRegistriesClient()
         self.engine_version = engine_version
+        self.classical_active_marker_gap: dict | None = None
 
     # -- public API ---------------------------------------------------------
 
@@ -57,18 +64,32 @@ class ModernizerEngine:
         self,
         spec: FormulationSpec | dict[str, Any],
         bioavailability_evidence: dict[str, BioavailabilityEvidence] | None = None,
-    ) -> ModernizedSKU:
+    ) -> ModernizedSKU | None:
         """Run the modernization pipeline.
 
         ``bioavailability_evidence`` maps ingredient_id → a cited fold-change
         retrieved and adjudicated upstream. Anything absent from it yields a
         qualitative expectation rather than an asserted number.
+
+        Returns ``None`` only when every ingredient is a classical preparation
+        with no registry marker. That is not a failure: the indicator on
+        ``classical_active_marker_gap`` explains the gap, and no chemistry is
+        fabricated to force a SKU into existence.
         """
+        self.classical_active_marker_gap = None
         spec = self._validate_input(spec)
         evidence = bioavailability_evidence or {}
+        indicator = classical_active_marker_gap(spec, self.registries)
+        self.classical_active_marker_gap = indicator
+        gapped = {
+            item["ingredient_id"]
+            for item in (indicator or {}).get("ingredients", ())
+        }
 
         entries: list[ModernizedIngredient] = []
         for ing in spec.ingredients:
+            if ing.ingredient_id in gapped:
+                continue
             marker_rec = self.registries.lookup_marker(ing.ingredient_id)
             props = self.registries.get_physicochemical_properties(marker_rec.marker_name)
 
@@ -97,6 +118,9 @@ class ModernizerEngine:
                     delivery=delivery,
                 )
             )
+
+        if not entries:
+            return None
 
         return ModernizedSKU(
             sku_id=f"SKU-{spec.formulation_id}",
