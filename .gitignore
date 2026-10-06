@@ -17,6 +17,9 @@ cache/
 
 # Stage B compose drafts (local demo files; created on save)
 herbenzo/data/compose_drafts/
+
+# IMPPAT 3.0 local download cache (CC BY-NC-ND 4.0 — never commit)
+data/external/imppat/cache/
 * 2.py
 * 2.*
 .DS_Store
