@@ -84,6 +84,15 @@
             return `<li><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a></li>`;
           })
           .join("");
+        const searches = row.evidence_searches || [];
+        const searchHtml = searches
+          .map((item) => {
+            const url = item.url || "";
+            if (!url) return "";
+            const label = `${item.source || "Search"}${item.kind ? " — " + item.kind : ""}`;
+            return `<li><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a></li>`;
+          })
+          .join("");
         return `
           <button type="button" class="format-card" data-dosage-form="${escapeHtml(row.dosage_form_label || row.name || "")}">
             <span class="format-card-head">
@@ -94,6 +103,7 @@
             ${reasons.map((line) => `<p>${escapeHtml(line)}</p>`).join("")}
             ${cautions.slice(0, 2).map((line) => `<p>${escapeHtml(line)}</p>`).join("")}
             ${refHtml ? `<ul>${refHtml}</ul>` : ""}
+            ${searchHtml ? `<p class="format-kicker">Evidence searches</p><ul>${searchHtml}</ul>` : ""}
           </button>`;
       })
       .join("");

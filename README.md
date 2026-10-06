@@ -92,6 +92,18 @@ models reject unknown fields (`extra="forbid"`), so an extra key on that
 response would fail any consumer that re-validates the payload as a
 ModernizedSKU. Use the separate endpoint.
 
+Catalog references include static regulatory citations checked on 6 Oct 2026:
+the FSSAI Nutra Regulations 2022 direction (clause 5(1)) on gummy, jelly,
+chewable, mouth-dissolving strip, and bar formats; FDA nanomaterials guidance
+and the EMA nanomedicines hub on nanoemulsion and conventional emulsion; and
+the FDA Inactive Ingredient Database for excipient precedent. When ashwagandha
+or turmeric is selected, each suggestion also cites that herb's EMA HMPC
+monograph. No monograph was verified for the other registry herbs. Each
+suggestion also carries prebuilt evidence-search URLs for Europe PMC, the NIH
+DSLD `search-filter` query, and the Health Canada LNHPD advanced-search page.
+Those URLs are strings only. Ranking does not call them. LNHPD has no
+documented free-text ingredient query, so that link is not prefilled.
+
 For a Chyawanprash-like or other classical name (`chyawanprash`, `avaleha`,
 `lehya`, `churna`, and the other tokens in `CLASSICAL_TOKENS`), nanoemulsion
 stays in the ranked list. It is strongly down-ranked and carries an explicit
@@ -216,7 +228,7 @@ $ python -m herbenzo.cli adjudicate --pmid 37257749 \
 | `herbenzo/cli.py` | Command line |
 | `herbenzo/api.py` | FastAPI: UI at `/`, `GET /health`, `GET /ingredients`, `/drafts`, `POST /modernize`, `POST /suggest-formats` on `:8003` |
 | `herbenzo/format_suggestions.py` | Advisory format catalog and ranker (does not change ModernizedSKU) |
-| `herbenzo/data/modern_formats.json` | Finished-format catalog, including checked market-reference URLs |
+| `herbenzo/data/modern_formats.json` | Finished-format catalog, including checked market pages and static regulatory citations |
 | `herbenzo/static/` | Independent B UI (compose form, drafts, raw JSON, format panel) |
 | `herbenzo/data/compose_drafts/` | On-disk compose drafts (gitignored; created on save) |
 | `herbenzo/contract_gate.py` | Shared-package FormulationSpec / ModernizedSKU gates |

@@ -73,9 +73,82 @@ def test_catalog_loads_and_validates():
             assert ref.url.startswith("https://")
     gummy_urls = {ref.url for ref in by_id[GUMMY_FORMAT_ID].references}
     assert "https://gruns.co/" in gummy_urls
-    assert by_id[NANOEMULSION_FORMAT_ID].references == []
+    fssai = "https://www.fssai.gov.in/upload/advisories/2022/03/6243ef28079ceDirection_Nutra_30_03_2022.pdf"
+    fda_nano = (
+        "https://www.fda.gov/regulatory-information/search-fda-guidance-documents/"
+        "drug-products-including-biological-products-contain-nanomaterials-guidance-industry"
+    )
+    ema_nano = (
+        "https://www.ema.europa.eu/en/human-regulatory-overview/research-development/"
+        "scientific-guidelines/multidisciplinary-guidelines/multidisciplinary-nanomedicines"
+    )
+    fda_iid = "https://www.fda.gov/drugs/drug-approvals-and-databases/inactive-ingredients-database-download"
+    for fmt_id in ("gummy", "soft_chew", "agar_jelly", "oral_film", "odt_melt", "nutrition_bar"):
+        notes = [ref.note or "" for ref in by_id[fmt_id].references if ref.url == fssai]
+        assert notes, fmt_id
+        assert "5(1)" in notes[0]
+        assert "nutraceutical" in notes[0].lower()
+        assert "FSMP" in notes[0]
+    nano_urls = {ref.url for ref in by_id[NANOEMULSION_FORMAT_ID].references}
+    assert fda_nano in nano_urls
+    assert ema_nano in nano_urls
+    assert fda_iid in nano_urls
+    emulsion_notes = " ".join(
+        ref.note or ""
+        for ref in by_id["emulsion"].references
+        if ref.url in {fda_nano, ema_nano}
+    ).lower()
+    assert "conventional emulsion" in emulsion_notes
+    assert "not itself a nanomaterial" in emulsion_notes
+    assert fda_iid in {ref.url for ref in by_id["capsule"].references}
+    assert fda_iid in {ref.url for ref in by_id["suspension"].references}
     assert by_id["frozen_dessert"].references == []
     assert all("owner guidance" not in line for line in by_id[NANOEMULSION_FORMAT_ID].constraints)
+
+
+def test_hmpc_and_evidence_links_are_static_and_offline(monkeypatch: pytest.MonkeyPatch):
+    import socket
+    import urllib.request
+
+    def _blocked(*_args, **_kwargs):
+        raise AssertionError("format ranking must not open a network connection")
+
+    monkeypatch.setattr(socket, "create_connection", _blocked)
+    monkeypatch.setattr(urllib.request, "urlopen", _blocked)
+
+    body = suggest_formats(["HB-ASHW", "HB-TURM"], dosage_form="gummy")
+    gummy = next(row for row in body["suggestions"] if row["format_id"] == GUMMY_FORMAT_ID)
+    urls = {ref["url"] for ref in gummy["references"]}
+    assert "https://www.ema.europa.eu/en/medicines/herbal/withaniae-somniferae-radix" in urls
+    assert "https://www.ema.europa.eu/en/medicines/herbal/curcumae-longae-rhizoma" in urls
+    assert "https://gruns.co/" in urls
+
+    searches = {row["source"]: row for row in gummy["evidence_searches"]}
+    europe = searches["Europe PMC"]
+    assert europe["url"].startswith("https://europepmc.org/search?query=")
+    assert "Ashwagandha" in europe["query"]
+    assert "Withania somnifera" in europe["query"]
+    assert "Turmeric" in europe["query"]
+    assert "Curcuma longa" in europe["query"]
+    assert "gummy" in europe["query"].lower()
+    dsld = searches["NIH DSLD"]
+    assert dsld["url"].startswith("https://api.ods.od.nih.gov/dsld/v9/search-filter?q=")
+    assert "Ashwagandha" in dsld["query"]
+    assert "gummy" in dsld["query"].lower()
+    lnhpd = searches["Health Canada LNHPD"]
+    assert lnhpd["url"].startswith("https://health-products.canada.ca/lnhpd-bdpsnh/")
+    assert "search-recherche-type=advanced-avancee" in lnhpd["url"]
+    assert "Ashwagandha" not in lnhpd["url"]
+    assert "ingredient=" not in lnhpd["url"]
+
+    amla = suggest_formats(["HB-AMLA"])
+    amla_gummy = next(row for row in amla["suggestions"] if row["format_id"] == GUMMY_FORMAT_ID)
+    assert all(
+        "/medicines/herbal/" not in ref["url"] for ref in amla_gummy["references"]
+    )
+    assert amla_gummy["evidence_searches"][0]["query"].startswith(
+        '("Indian gooseberry" OR "Phyllanthus emblica") AND '
+    )
 
 
 def test_ranking_is_deterministic_for_fixture_ingredients():
@@ -208,6 +281,8 @@ def test_health_and_ui_expose_format_suggestions(client: TestClient):
     script = client.get("/static/format_suggestions.js")
     assert script.status_code == 200
     assert "/suggest-formats" in script.text
+    assert "evidence_searches" in script.text
+    assert "Evidence searches" in script.text
     style = client.get("/static/format_suggestions.css")
     assert style.status_code == 200
 

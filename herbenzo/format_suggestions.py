@@ -9,9 +9,17 @@ nanoemulsion. They keep it in the list, subtract a large penalty, and attach
 an explicit owner caution while gummy and soft-chew formats receive a
 preference bonus.
 
-Market references live in ``herbenzo/data/modern_formats.json``. A reference
-is included only when a public brand page was checked. Empty ``references``
-means none was verified.
+Market and regulatory references live in ``herbenzo/data/modern_formats.json``.
+A brand reference is included only when a public page was checked. Regulatory
+citations (FSSAI, FDA, EMA) are static https links checked on 6 Oct 2026.
+Empty ``references`` means neither a brand page nor a format-specific citation
+was verified.
+
+EMA HMPC monographs are attached per suggestion only for Withania somnifera
+(HB-ASHW) and Curcuma longa (HB-TURM). Europe PMC, NIH DSLD, and Health Canada
+LNHPD evidence links are built as strings. Ranking does not open a network
+connection. The LNHPD link is the advanced-search page and is not prefilled,
+because that API has no documented free-text ingredient query.
 """
 
 from __future__ import annotations
@@ -22,6 +30,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -97,6 +106,40 @@ CLASSICAL_TOKENS = frozenset(
 _MASK_TASTES = frozenset({"bitter", "astringent", "pungent", "sour"})
 _TOKEN = re.compile(r"[a-z0-9]+")
 _WORD = re.compile(r"[a-z0-9]+")
+
+_EUROPE_PMC_SEARCH = "https://europepmc.org/search?query="
+_DSLD_SEARCH = "https://api.ods.od.nih.gov/dsld/v9/search-filter?q="
+_LNHPD_SEARCH = (
+    "https://health-products.canada.ca/lnhpd-bdpsnh/start-debuter"
+    "?lang=eng&search-recherche-type=advanced-avancee"
+)
+_LNHPD_NOTE = (
+    "Advanced-search page. The medicinal-ingredient endpoint documents only "
+    "id, page, lang, and type, so this URL is not prefilled with an ingredient "
+    "or dosage form."
+)
+
+#: Verified EMA HMPC herbal monographs. Other registry herbs have none.
+_HMPC_MONOGRAPHS: dict[str, dict[str, str]] = {
+    "HB-ASHW": {
+        "brand": "EMA HMPC",
+        "category": "herbal monograph",
+        "url": "https://www.ema.europa.eu/en/medicines/herbal/withaniae-somniferae-radix",
+        "note": (
+            "Withaniae somniferae radix. Covers accepted preparations and "
+            "pharmaceutical forms. Attached because this suggestion includes HB-ASHW."
+        ),
+    },
+    "HB-TURM": {
+        "brand": "EMA HMPC",
+        "category": "herbal monograph",
+        "url": "https://www.ema.europa.eu/en/medicines/herbal/curcumae-longae-rhizoma",
+        "note": (
+            "Curcumae longae rhizoma. Covers accepted preparations and "
+            "pharmaceutical forms. Attached because this suggestion includes HB-TURM."
+        ),
+    },
+}
 
 _BASE = 50.0
 _AUDIENCE_HIT = 10.0
@@ -273,6 +316,8 @@ class IngredientProfile:
     heat_sensitive: bool = False
     volatile: bool = False
     acid_labile: bool = False
+    common_name: str = ""
+    botanical_name: str = ""
 
 
 def profile_from_mapping(data: dict[str, Any]) -> IngredientProfile:
@@ -294,6 +339,8 @@ def profile_from_mapping(data: dict[str, Any]) -> IngredientProfile:
         heat_sensitive=bool(data.get("heat_sensitive")),
         volatile=bool(data.get("volatile")),
         acid_labile=bool(data.get("acid_labile")),
+        common_name=str(data.get("common_name") or ""),
+        botanical_name=str(data.get("botanical_name") or ""),
     )
 
 
@@ -303,7 +350,7 @@ def profile_from_registry(
     registries: Any,
 ) -> IngredientProfile:
     """Resolve one registry id. Unknown ids raise ``UnknownIngredient``."""
-    registries.lookup_ingredient(ingredient_id)
+    record = registries.lookup_ingredient(ingredient_id)
     marker = registries.lookup_marker(ingredient_id)
     props = registries.get_physicochemical_properties(marker.marker_name)
     assessment = classify(props, marker)
@@ -323,6 +370,8 @@ def profile_from_registry(
         heat_sensitive=bool(traits.get("heat_sensitive")),
         volatile=bool(traits.get("volatile")),
         acid_labile=bool(marker.acid_labile),
+        common_name=str(getattr(record, "common_name", "") or ""),
+        botanical_name=str(getattr(record, "botanical_name", "") or ""),
     )
 
 
@@ -336,6 +385,89 @@ def _heat_sensitive(profiles: list[IngredientProfile]) -> bool:
 
 def _clamp(score: float) -> float:
     return max(0.0, min(100.0, round(score, 2)))
+
+
+def _quote_term(term: str) -> str:
+    text = " ".join(term.split())
+    if not text:
+        return ""
+    if any(char in text for char in " -"):
+        return f'"{text}"'
+    return text
+
+
+def _ingredient_clause(profile: IngredientProfile) -> str:
+    common = profile.common_name.strip()
+    botanical = profile.botanical_name.strip()
+    if common and botanical and common.lower() != botanical.lower():
+        return f"({_quote_term(common)} OR {_quote_term(botanical)})"
+    return _quote_term(common or botanical or profile.ingredient_id)
+
+
+def _format_clause(fmt: _Format) -> str:
+    terms: list[str] = []
+    seen: set[str] = set()
+    for raw in (fmt.dosage_form_label, *fmt.aliases):
+        text = " ".join(raw.split())
+        key = text.lower()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        quoted = _quote_term(text)
+        if quoted:
+            terms.append(quoted)
+    return "(" + " OR ".join(terms) + ")"
+
+
+def _evidence_searches(profiles: list[IngredientProfile], fmt: _Format) -> list[dict[str, str]]:
+    """Build literature and label-search URLs. This function does not fetch them."""
+    clauses = [_ingredient_clause(profile) for profile in profiles]
+    if not clauses:
+        ingredients = '"herbal"'
+    elif len(clauses) == 1:
+        ingredients = clauses[0]
+    else:
+        ingredients = "(" + " OR ".join(clauses) + ")"
+    query = f"{ingredients} AND {_format_clause(fmt)}"
+    names = [
+        (profile.common_name or profile.botanical_name or profile.ingredient_id).strip()
+        for profile in profiles
+    ]
+    dsld_query = " ".join([*names, fmt.dosage_form_label]).strip()
+    return [
+        {
+            "source": "Europe PMC",
+            "kind": "literature",
+            "query": query,
+            "url": _EUROPE_PMC_SEARCH + quote(query, safe=""),
+        },
+        {
+            "source": "NIH DSLD",
+            "kind": "marketed supplement labels",
+            "query": dsld_query,
+            "url": _DSLD_SEARCH + quote(dsld_query, safe=""),
+            "note": "Documented DSLD search-filter q parameter. No live call is made.",
+        },
+        {
+            "source": "Health Canada LNHPD",
+            "kind": "licensed natural health products",
+            "url": _LNHPD_SEARCH,
+            "note": _LNHPD_NOTE,
+        },
+    ]
+
+
+def _suggestion_references(
+    fmt: _Format, profiles: list[IngredientProfile]
+) -> list[dict[str, str]]:
+    rows = [ref.as_public() for ref in fmt.references]
+    seen = {row["url"] for row in rows}
+    for profile in profiles:
+        monograph = _HMPC_MONOGRAPHS.get(profile.ingredient_id)
+        if monograph and monograph["url"] not in seen:
+            rows.append(dict(monograph))
+            seen.add(monograph["url"])
+    return rows
 
 
 def _score_one(
@@ -459,7 +591,8 @@ def _score_one(
         "score": _clamp(score),
         "fit_reasons": reasons,
         "cautions": cautions,
-        "references": [ref.as_public() for ref in fmt.references],
+        "references": _suggestion_references(fmt, profiles),
+        "evidence_searches": _evidence_searches(profiles, fmt),
         "dosage_form_label": fmt.dosage_form_label,
         "excipients": list(fmt.excipients),
     }
