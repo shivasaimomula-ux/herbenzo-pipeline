@@ -34,9 +34,140 @@ from herbenzo.services.ayush_portal import (
     ayush_public_record,
     ayush_public_search,
 )
-from herbenzo.services.candidate_store import CandidateStore
-from herbenzo.services.enrichment import EnrichmentService
-from tests.test_enrichment import FakeChem, FakeEutils, FakePubChem, RankingLlm
+from herbenzo.services.gemini_research import TOOL_DEFINITIONS
+from herbenzo.services.records import provenance_from_approvals
+from herbenzo.services.research import ResearchService
+
+_TAXONOMY_XML = """<?xml version="1.0" ?>
+<TaxaSet><Taxon>
+  <TaxId>999001</TaxId>
+  <ScientificName>Bacopa monnieri</ScientificName>
+  <Rank>species</Rank>
+  <Division>Plants and Fungi</Division>
+  <OtherNames>
+    <Synonym>Herpestis monniera</Synonym>
+    <CommonName>bacopa</CommonName>
+  </OtherNames>
+  <Lineage>cellular organisms; Eukaryota; Bacopa</Lineage>
+</Taxon></TaxaSet>
+"""
+
+_RETRIEVED = "2026-10-06T00:00:00+00:00"
+
+
+class FakeEutils:
+    def search(self, db: str, term: str, *, retmax: int = 5) -> dict:
+        ids = {
+            "taxonomy": ["999001"],
+            "pccompound": ["100", "200"],
+            "pubmed": ["321"],
+            "gene": ["55"],
+            "protein": ["AAA000.1"],
+        }.get(db, [])
+        return {
+            "db": db,
+            "term": term,
+            "count": len(ids),
+            "ids": ids[:retmax],
+            "retrieved_at": _RETRIEVED,
+        }
+
+    def summary(self, db: str, ids: list[str]) -> dict:
+        records = []
+        if db == "pubmed":
+            records = [
+                {"uid": "321", "title": "Bacosides of Bacopa monnieri", "source": "Phytochemistry", "pubdate": "2020"}
+            ]
+        elif db == "gene":
+            records = [
+                {
+                    "uid": "55",
+                    "name": "BACO",
+                    "description": "example gene",
+                    "organism": {"scientificname": "Bacopa monnieri"},
+                }
+            ]
+        elif db == "protein":
+            records = [
+                {"accessionversion": "AAA000.1", "title": "example protein", "taxname": "Bacopa monnieri", "slen": 40}
+            ]
+        return {"db": db, "records": records, "retrieved_at": _RETRIEVED}
+
+    def fetch_text(self, db: str, ids: list[str], *, retmode: str = "xml") -> tuple[str, str]:
+        assert db == "taxonomy"
+        assert ids == ["999001"]
+        return _TAXONOMY_XML, _RETRIEVED
+
+
+def _props(cid: int, title: str, xlogp: float, weight: float) -> dict:
+    return {
+        "cid": cid,
+        "title": title,
+        "molecular_formula": "C10H10O2",
+        "molecular_weight": weight,
+        "xlogp": xlogp,
+        "tpsa": 40.0,
+        "hbd": 1,
+        "hba": 2,
+        "rotatable_bonds": 3,
+        "inchi_key": "AAAAAAAAAAAAAA-AAAAAAAAAA-A",
+        "canonical_smiles": "CCO",
+        "iupac_name": title.lower(),
+    }
+
+
+class FakePubChem:
+    def properties(self, cid: int):
+        table = {
+            100: _props(100, "Bacoside A", 1.5, 769.0),
+            200: _props(200, "Bacopaside I", 2.5, 979.0),
+        }
+        return table[cid], _RETRIEVED
+
+    def synonyms(self, cid: int):
+        return ["synonym"], _RETRIEVED
+
+    def bioassays(self, cid: int):
+        return {
+            "status": "ok",
+            "total": 4,
+            "active": 1,
+            "source": "PubChem PUG-REST",
+            "url": f"https://pubchem.ncbi.nlm.nih.gov/compound/{cid}",
+            "retrieved_at": _RETRIEVED,
+            "error": None,
+        }, _RETRIEVED
+
+
+class FakeChem:
+    def classify(self, *, cid: int | None, inchikey: str | None, smiles: str | None) -> dict:
+        return {
+            "classyfire": {"status": "ok"},
+            "npclassifier": {"status": "ok"},
+        }
+
+
+class RankingLlm:
+    available = True
+
+    def justify(self, context: dict) -> dict:
+        return {
+            "status": "ok",
+            "narrative": "Prefer the more specific saponin.",
+            "numerics_ignored": False,
+            "ignored_names": [],
+        }
+
+
+def _research(**kwargs) -> ResearchService:
+    return ResearchService(
+        eutils=FakeEutils(),
+        pubchem=FakePubChem(),
+        chemclass=FakeChem(),
+        llm=RankingLlm(),
+        **kwargs,
+    )
+
 
 FIX = Path(__file__).resolve().parent / "fixtures" / "ayush_portal"
 _WHEN = datetime(2026, 10, 6, 12, 0, tzinfo=UTC)
@@ -531,6 +662,10 @@ def test_disabled_by_default_makes_no_network_call():
 def test_tool_schema_and_adapter_return_compact_hits(tmp_path: Path):
     schema = ayush_portal_tool_schema()
     assert schema["name"] == "ayush_portal_search"
+    assert any(
+        (tool.get("function") or {}).get("name") == "ayush_portal_search"
+        for tool in TOOL_DEFINITIONS
+    )
     assert schema["parameters"]["required"] == ["query"]
     assert schema is not AYUSH_PORTAL_FUNCTION
     assert set(schema["parameters"]["properties"]) == {"query", "system", "category", "limit"}
@@ -581,7 +716,7 @@ def test_client_does_not_use_the_disk_cache():
     assert "cache_dir" not in source
 
 
-def test_portal_failure_does_not_block_enrichment(tmp_path: Path):
+def test_portal_failure_does_not_block_research(tmp_path: Path):
     cases = [
         lambda: Scripted([(500, b"down"), (500, b"down"), (500, b"down")]),
         lambda: Scripted([(200, _bytes("html_error.html"))]),
@@ -592,15 +727,7 @@ def test_portal_failure_does_not_block_enrichment(tmp_path: Path):
         transport = build()
         portal = _client(transport, min_interval_s=0, max_retries=0)
         ayush = AyushPortalService(portal, reviews=AyushReviewStore(tmp_path / transport.__class__.__name__))
-        service = EnrichmentService(
-            eutils=FakeEutils(),
-            pubchem=FakePubChem(),
-            chemclass=FakeChem(),
-            llm=RankingLlm(),
-            store=CandidateStore(tmp_path / "candidates"),
-            ayush=ayush,
-        )
-        doc = service.propose("Bacopa monnieri")
+        doc = _research(ayush=ayush).research("Bacopa monnieri")
         assert doc["status"] == "pending"
         assert doc["literature"]["status"] == "ok"
         assert doc["literature"]["articles"][0]["pmid"] == "321"
@@ -609,26 +736,19 @@ def test_portal_failure_does_not_block_enrichment(tmp_path: Path):
         assert doc["ayush_portal"]["reason"]
 
 
-def test_disabled_enrichment_does_not_call_the_network(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_disabled_research_does_not_call_the_portal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("HERBENZO_AYUSH_PORTAL_ENABLED", "false")
 
     def boom(*_args, **_kwargs):
         raise AssertionError("network")
 
     monkeypatch.setattr("urllib.request.urlopen", boom)
-    service = EnrichmentService(
-        eutils=FakeEutils(),
-        pubchem=FakePubChem(),
-        chemclass=FakeChem(),
-        llm=RankingLlm(),
-        store=CandidateStore(tmp_path),
-    )
-    doc = service.propose("Bacopa monnieri")
+    doc = _research().research("Bacopa monnieri")
     assert "ayush_portal" not in doc
     assert doc["literature"]["articles"][0]["pmid"] == "321"
 
 
-def test_enabled_enrichment_stores_provenance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_enabled_research_stores_ayush_provenance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("HERBENZO_AYUSH_PORTAL_ENABLED", "false")
     transport = Scripted([_search_ok()])
     portal = _client(transport, max_retries=0)
@@ -638,15 +758,8 @@ def test_enabled_enrichment_stores_provenance(tmp_path: Path, monkeypatch: pytes
         reviews=AyushReviewStore(tmp_path),
         now=lambda: _WHEN,
     )
-    service = EnrichmentService(
-        eutils=FakeEutils(),
-        pubchem=FakePubChem(),
-        chemclass=FakeChem(),
-        llm=RankingLlm(),
-        store=CandidateStore(tmp_path),
-        ayush=ayush,
-    )
-    doc = service.propose("Bacopa monnieri")
+    service = _research(ayush=ayush)
+    doc = service.research("Bacopa monnieri")
     block = doc["ayush_portal"]
     assert block["status"] == "ok"
     assert block["source"] == SOURCE
@@ -657,6 +770,13 @@ def test_enabled_enrichment_stores_provenance(tmp_path: Path, monkeypatch: pytes
     for record in block["records"]:
         assert record["attribution"].startswith("Source: Ayush Research Portal")
         assert "abstract" not in record
+    approved = service.approve(doc)
+    assert approved["ayush_portal"]["status"] == "ok"
+    provenance = provenance_from_approvals([approved])
+    hits = provenance["ingredients"][0]["ayush"]
+    assert hits
+    assert hits[0]["arp_id"]
+    assert any(hit.get("pmid") or hit.get("url") for hit in hits)
 
 
 def test_cli_and_api_accept(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]):

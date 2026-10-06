@@ -182,6 +182,7 @@ class ResearchService:
         llm: LlmClient | None = None,
         imppat: ImppatLookup | None = None,
         names: Any | None = None,
+        ayush: Any | None = None,
         min_pubmed_refs: int | None = None,
         web_search_endpoint: str | None = None,
     ) -> None:
@@ -196,6 +197,7 @@ class ResearchService:
         )
         self.imppat = imppat if imppat is not None else ImppatLookup(settings.imppat_dir)
         self.names = names if names is not None else QuietNameSources()
+        self.ayush = ayush
         self.min_pubmed_refs = settings.min_pubmed_refs if min_pubmed_refs is None else int(min_pubmed_refs)
         self.web_search_endpoint = (
             settings.web_search_endpoint if web_search_endpoint is None else web_search_endpoint
@@ -225,6 +227,7 @@ class ResearchService:
         scientific = str(taxonomy["scientific_name"])
         imppat = self.imppat.lookup(scientific, list(taxonomy.get("synonyms") or []))
         literature = self.literature_record(scientific, max_pmids=max_pmids)
+        ayush_portal = self.ayush_literature(scientific)
         texts = _literature_texts(literature)
         constituents = constituent_names(*texts)
         pathways = pathway_mentions(*texts)
@@ -276,6 +279,8 @@ class ResearchService:
             },
             "web": {"status": "not_requested", "results": []},
         }
+        if ayush_portal is not None:
+            doc["ayush_portal"] = ayush_portal
         return apply_name_match(doc, name_sources=name_sources, name_query=name_query)
 
     def suggest(self, query: str) -> dict[str, Any]:
@@ -531,6 +536,43 @@ class ResearchService:
             summary.get("retrieved_at") or found.get("retrieved_at"),
             sort="relevance",
         )
+
+    def ayush_literature(
+        self,
+        scientific_name: str,
+        *,
+        system: str = "any",
+        category: str = "any",
+        limit: int | None = None,
+    ) -> dict[str, Any] | None:
+        """Opt-in Ayush Research Portal hits for one scientific name.
+
+        An injected client is always used, including in tests. With no client
+        and the switch off, the key is omitted. A live failure is a status
+        block and does not stop PubMed research. Accept notes stay in
+        ``ayush_reviews.json``; this method does not write an ingredient list.
+        """
+        service = self.ayush
+        if service is None:
+            try:
+                settings = get_settings()
+            except Exception:
+                return None
+            if not settings.ayush_portal_enabled:
+                return None
+            try:
+                from herbenzo.services.ayush_portal import AyushPortalService
+
+                service = AyushPortalService.from_settings(settings, pubmed=self.eutils)
+            except Exception as exc:
+                return _ayush_unavailable(scientific_name, exc.__class__.__name__)
+        try:
+            result = service.search(scientific_name, system=system, category=category, limit=limit)
+        except Exception as exc:
+            return _ayush_unavailable(scientific_name, exc.__class__.__name__)
+        if not isinstance(result, dict):
+            return _ayush_unavailable(scientific_name, "unavailable")
+        return result
 
     def marker_candidates(
         self,
@@ -965,7 +1007,7 @@ class ResearchService:
             properties[selected["name"]] = _registry_properties(selected)
         now = _now()
         literature = candidate.get("literature") or {}
-        return {
+        document = {
             "status": "approved",
             "approved_at": now,
             "query": candidate.get("query"),
@@ -1017,6 +1059,9 @@ class ResearchService:
             "retrieved_at": candidate.get("retrieved_at"),
             "name_match": candidate.get("name_match") if isinstance(candidate.get("name_match"), dict) else None,
         }
+        if isinstance(candidate.get("ayush_portal"), dict):
+            document["ayush_portal"] = candidate["ayush_portal"]
+        return document
 
     def _advisory_narrative(self, taxonomy: dict, literature: dict, markers: list[dict]) -> dict[str, Any]:
         settings = get_settings()
@@ -1374,6 +1419,19 @@ def _literature_block(term, articles, total, retrieved_at, status="ok", error=No
         "source": "PubMed E-utilities",
         "retrieved_at": retrieved_at,
         "error": error,
+    }
+
+
+def _ayush_unavailable(scientific_name: str, reason: str) -> dict[str, Any]:
+    return {
+        "status": "unavailable",
+        "reason": reason,
+        "source": "Ayush Research Portal",
+        "query": scientific_name,
+        "endpoint": "getFilter_Search_data_home1",
+        "retrieved_at": None,
+        "records": [],
+        "hits": [],
     }
 
 

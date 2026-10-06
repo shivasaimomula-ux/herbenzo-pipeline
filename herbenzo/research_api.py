@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, ConfigDict, Field
 
 from herbenzo.contract_gate import http_error_detail
 from herbenzo.services.gemini_research import ResearchFrontDoor
@@ -139,3 +140,43 @@ async def research_marker(request: Request):
         )
     except ResearchError as exc:
         raise _error(exc) from exc
+
+
+class AyushAcceptBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    note: str = Field(default="", max_length=500)
+
+
+@router.get("/research/ayush/search")
+def research_ayush_search(
+    q: str = Query(min_length=1, max_length=200),
+    system: str = "any",
+    category: str = "any",
+    limit: int | None = Query(default=None, ge=1, le=25),
+    offset: int = Query(default=0, ge=0, le=5000),
+):
+    from herbenzo.services.ayush_portal import ayush_public_search
+
+    return ayush_public_search(q, system=system, category=category, limit=limit, offset=offset)
+
+
+@router.get("/research/ayush/records/{arp_id}")
+def research_ayush_record(arp_id: str):
+    from herbenzo.services.ayush_portal import ayush_public_record
+
+    try:
+        return ayush_public_record(arp_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/enrich/ayush/{arp_id}/accept")
+def accept_ayush_record(arp_id: str, body: AyushAcceptBody | None = None):
+    from herbenzo.config import get_settings
+    from herbenzo.services.ayush_portal import AyushPortalService
+
+    note = body.note if body is not None else ""
+    try:
+        return AyushPortalService.from_settings(get_settings()).accept(arp_id, note=note)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

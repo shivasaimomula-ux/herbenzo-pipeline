@@ -15,6 +15,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Callable
 
+from herbenzo.clients.ayush_portal import AYUSH_PORTAL_TOOL
 from herbenzo.config import get_settings
 from herbenzo.services.llm_config import validate_llm_settings
 from herbenzo.services.research import ResearchService, apply_name_match, _now
@@ -58,6 +59,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     _tool("imppat_lookup", "Advisory IMPPAT context for a scientific name.", {"scientific_name": "string"}),
     _tool("web_search", "Search public web pages for market or monograph presence.", {"query": "string"}),
     _tool("web_fetch", "Fetch one URL that web_search already returned in this session.", {"url": "string"}),
+    AYUSH_PORTAL_TOOL,
 ]
 
 
@@ -127,7 +129,9 @@ class ResearchFrontDoor:
                     "Research one botanical ingredient by calling tools. "
                     "Do not invent PMIDs, CIDs, taxonomy ids, or URLs. "
                     "Do not state physicochemical numbers; PubChem tools supply those. "
-                    "Prefer specific constituent names over a bare class name."
+                    "Prefer specific constituent names over a bare class name. "
+                    "Call ayush_portal_search for the scientific name when that tool is listed. "
+                    "Ayush hits are bibliographic only; do not invent ARP ids, abstracts, or emails."
                 ),
             },
             {"role": "user", "content": query},
@@ -162,7 +166,7 @@ class ResearchFrontDoor:
             truncated = True
         if not session.taxonomy:
             raise RuntimeError("Gemini finished without a taxonomy tool result")
-        return session.assemble(
+        doc = session.assemble(
             query=query,
             part_used=part_used,
             narrative=final_text,
@@ -170,6 +174,12 @@ class ResearchFrontDoor:
             truncated=truncated,
             min_pubmed_refs=self.service.min_pubmed_refs,
         )
+        if "ayush_portal" not in doc:
+            scientific = str((session.taxonomy or {}).get("scientific_name") or query)
+            block = self.service.ayush_literature(scientific)
+            if block is not None:
+                doc["ayush_portal"] = block
+        return doc
 
     def _complete(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         if self.completer is not None:
@@ -188,6 +198,7 @@ class _ToolSession:
         self.markers: list[dict[str, Any]] = []
         self.species_search: dict[str, Any] | None = None
         self.web_results: list[dict[str, Any]] = []
+        self.ayush: dict[str, Any] | None = None
         self.allowed_urls: set[str] = set()
         self.pmids: set[str] = set()
         self.cids: set[str] = set()
@@ -265,6 +276,35 @@ class _ToolSession:
                 result = {"status": "rejected", "error": "url was not returned by web_search in this session"}
             else:
                 result = {"status": "ok", "url": url}
+        elif name == "ayush_portal_search":
+            scientific = str(arguments.get("query") or (self.taxonomy or {}).get("scientific_name") or "")
+            limit = arguments.get("limit")
+            full = self.service.ayush_literature(
+                scientific,
+                system=str(arguments.get("system") or "any"),
+                category=str(arguments.get("category") or "any"),
+                limit=limit if isinstance(limit, int) else None,
+            )
+            if full is None:
+                result = {
+                    "status": "disabled",
+                    "reason": "HERBENZO_AYUSH_PORTAL_ENABLED is false",
+                    "hits": [],
+                }
+            else:
+                self.ayush = full
+                for record in list(full.get("records") or []) + list(full.get("hits") or []):
+                    if isinstance(record, dict) and record.get("record_url"):
+                        self.allowed_urls.add(str(record["record_url"]))
+                status = full.get("status")
+                if status != "ok":
+                    result = {
+                        "status": status or "unavailable",
+                        "reason": full.get("reason") or "unavailable",
+                        "hits": [],
+                    }
+                else:
+                    result = {"status": "ok", "hits": list(full.get("hits") or [])}
         else:
             result = {"status": "ignored", "error": f"unknown tool {name}"}
         self.log.append({"tool": name, "arguments": arguments})
@@ -317,7 +357,7 @@ class _ToolSession:
         selected = _auto_selected(self.markers)
         tax_id = taxonomy.get("tax_id")
         now = _now()
-        return {
+        doc = {
             "schema_version": "research/1",
             "status": "pending",
             "query": query,
@@ -357,6 +397,9 @@ class _ToolSession:
             "truncated": truncated,
             "tool_log": self.log,
         }
+        if isinstance(self.ayush, dict):
+            doc["ayush_portal"] = self.ayush
+        return doc
 
 
 def _parse_call(call: dict[str, Any]) -> tuple[str, dict[str, Any], str]:

@@ -5,6 +5,9 @@
     python -m herbenzo.cli suggest "butterfly pea"
     python -m herbenzo.cli run examples/ashwagandha.json -o out/report.json
     python -m herbenzo.cli suggest-formats approvals.json --ingredient tax-43366
+    python -m herbenzo.cli ayush search "Withania somnifera" --system ayurveda --limit 5
+    python -m herbenzo.cli ayush record ARP_AYU030864
+    python -m herbenzo.cli ayush accept ARP_AYU030906 --note "journal checked"
 """
 
 from __future__ import annotations
@@ -228,8 +231,64 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--quantity", action="append", default=[], metavar="ID=MG")
     s.set_defaults(func=_cmd_suggest_formats)
 
+    ayush = sub.add_parser("ayush", help="Ayush Research Portal bibliographic lookup (off unless enabled)")
+    ayush_sub = ayush.add_subparsers(dest="ayush_cmd", required=True)
+    ayush_search = ayush_sub.add_parser("search", help="search ARP titles; prints hits with citations, or disabled/unavailable")
+    ayush_search.add_argument("query")
+    ayush_search.add_argument("--system", default="any")
+    ayush_search.add_argument("--category", default="any")
+    ayush_search.add_argument("--limit", type=int, default=None)
+    ayush_search.add_argument("--offset", type=int, default=0, help="row offset (portal startPage)")
+    ayush_search.set_defaults(func=_cmd_ayush_search)
+    ayush_record = ayush_sub.add_parser("record", help="fetch one ARP record page by ARP id")
+    ayush_record.add_argument("arp_id")
+    ayush_record.set_defaults(func=_cmd_ayush_record)
+    ayush_accept = ayush_sub.add_parser("accept", help="record a reviewer accept note for an ARP id")
+    ayush_accept.add_argument("arp_id")
+    ayush_accept.add_argument("--note", default="")
+    ayush_accept.set_defaults(func=_cmd_ayush_accept)
+
     args = p.parse_args(argv)
     return args.func(args)
+
+
+def _cmd_ayush_search(args) -> int:
+    from herbenzo.services.ayush_portal import ayush_public_search
+
+    result = ayush_public_search(
+        args.query,
+        system=args.system,
+        category=args.category,
+        limit=args.limit,
+        offset=args.offset,
+    )
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def _cmd_ayush_record(args) -> int:
+    from herbenzo.services.ayush_portal import ayush_public_record
+
+    try:
+        result = ayush_public_record(args.arp_id)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def _cmd_ayush_accept(args) -> int:
+    from herbenzo.config import get_settings
+    from herbenzo.services.ayush_portal import AyushPortalService
+
+    try:
+        decision = AyushPortalService.from_settings(get_settings()).accept(args.arp_id, note=args.note or "")
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(json.dumps(decision, indent=2))
+    return 0
 
 
 if __name__ == "__main__":

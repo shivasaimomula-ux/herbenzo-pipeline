@@ -189,6 +189,28 @@ def provenance_from_approvals(approvals: list[dict[str, Any]]) -> dict[str, Any]
         for article in literature.get("articles") or []:
             if isinstance(article, dict) and article.get("url"):
                 urls.append(article["url"])
+        ayush = doc.get("ayush_portal") if isinstance(doc.get("ayush_portal"), dict) else None
+        ayush_hits: list[dict[str, Any]] = []
+        if ayush is not None:
+            source_rows = ayush.get("records") if ayush.get("records") else ayush.get("hits") or []
+            for record in source_rows:
+                if not isinstance(record, dict):
+                    continue
+                citation = record.get("citation") if isinstance(record.get("citation"), dict) else {}
+                url = record.get("record_url") or record.get("publisher_url") or citation.get("url")
+                hit = {
+                    "arp_id": record.get("arp_id"),
+                    "pmid": record.get("pmid") or citation.get("pmid"),
+                    "doi": record.get("doi") or citation.get("doi"),
+                    "url": url,
+                    "confidence": record.get("confidence"),
+                    "review_status": record.get("review_status"),
+                }
+                if hit not in ayush_hits:
+                    ayush_hits.append(hit)
+                for link in (record.get("record_url"), record.get("publisher_url"), citation.get("url")):
+                    if link and link not in urls:
+                        urls.append(link)
         cids = []
         pubchem_rows = []
         for name, row in properties.items():
@@ -218,6 +240,8 @@ def provenance_from_approvals(approvals: list[dict[str, Any]]) -> dict[str, Any]
                 "name_match": doc.get("name_match") if isinstance(doc.get("name_match"), dict) else None,
             }
         )
+        if ayush is not None:
+            rows[-1]["ayush"] = ayush_hits
     return {
         "stored": False,
         "note": "Provenance from this request's approvals. It is not written to an ingredient registry.",

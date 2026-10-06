@@ -218,7 +218,12 @@ def ayush_portal_search_from_arguments(
 
 
 class AyushReviewStore:
-    """Reviewer decisions keyed by ARP ID. One JSON file, next to enrichment candidates."""
+    """Reviewer accept notes keyed by ARP ID.
+
+    The file is ``ayush_reviews.json`` under the configured directory
+    (``HERBENZO_REGISTRY_DIR``). It records a provenance note for one portal
+    record. It is not an ingredient registry and it does not store a candidate.
+    """
 
     def __init__(self, directory: str | Path) -> None:
         self.path = Path(directory).expanduser() / "ayush_reviews.json"

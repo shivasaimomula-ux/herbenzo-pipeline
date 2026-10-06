@@ -101,13 +101,25 @@ The berberine P-gp efflux flag is a classifier rule. It is honored only when the
 
 ### Provenance
 
-`research_provenance`, `warnings`, and `classical_active_marker_gap` sit beside the ModernizedSKU. `herbenzo-contracts` `ModernizedSKU` uses `extra="forbid"`, so those fields are not inside the shared model. The snapshot records taxonomy id, PMIDs, CIDs, URLs, retrieval times, PubChem numerics, the approval decision, and `name_match` (the query, scientific name, tax id, and which source produced the name). It is part of the response, not a database. A pending-marker SKU is still returned with that provenance.
+`research_provenance`, `warnings`, and `classical_active_marker_gap` sit beside the ModernizedSKU. `herbenzo-contracts` `ModernizedSKU` uses `extra="forbid"`, so those fields are not inside the shared model. The snapshot records taxonomy id, PMIDs, CIDs, URLs, retrieval times, PubChem numerics, the approval decision, and `name_match` (the query, scientific name, tax id, and which source produced the name). When the Ayush portal was on for that research, the same snapshot lists each hit's ARP id, PMID, DOI, URL, confidence, and review status. It is part of the response, not a database. A pending-marker SKU is still returned with that provenance.
+
+## Ayush Research Portal
+
+Off by default (`HERBENZO_AYUSH_PORTAL_ENABLED=false`). When enabled, research adds bibliographic hits from [arp.ayush.gov.in](https://arp.ayush.gov.in) beside the PubMed block. Abstracts and email addresses are dropped. The client is throttled, retries only on HTTP 5xx, and does not use the disk cache. See `data/external/ayush_portal/LICENSE_NOTICE.md`.
+
+`POST /enrich/ayush/{arp_id}/accept` writes a reviewer note to `ayush_reviews.json` under `HERBENZO_REGISTRY_DIR`. That file is an accept note, not an ingredient registry.
+
+```bash
+python -m herbenzo.cli ayush search "Withania somnifera" --system ayurveda --limit 5
+python -m herbenzo.cli ayush record ARP_AYU030864
+python -m herbenzo.cli ayush accept ARP_AYU030906 --note "journal checked"
+```
 
 ## Research front door
 
 `POST /research` goes through `ResearchFrontDoor` when Gemini is configured. The model plans tool calls. The candidate is assembled only from tool results.
 
-Tools: NCBI Taxonomy search, PubMed search/summary, PubChem name→CID, properties, and taxonomy links, species compound search (quoted and unquoted), IMPPAT lookup when the local cache exists, and an optional web search/fetch. `web_fetch` only opens URLs that `web_search` returned in the same session. If `HERBENZO_WEB_SEARCH_ENDPOINT` is unset, web search returns `unavailable` and research continues.
+Tools: NCBI Taxonomy search, PubMed search/summary, PubChem name→CID, properties, and taxonomy links, species compound search (quoted and unquoted), IMPPAT lookup when the local cache exists, an optional web search/fetch, and `ayush_portal_search`. `web_fetch` only opens URLs that `web_search` returned in the same session. If `HERBENZO_WEB_SEARCH_ENDPOINT` is unset, web search returns `unavailable` and research continues. `ayush_portal_search` runs only when `HERBENZO_AYUSH_PORTAL_ENABLED=true` (default false). A disabled switch omits `ayush_portal` from the candidate. A portal failure is `status: unavailable` and PubMed research continues.
 
 Guardrails:
 
@@ -174,6 +186,9 @@ python -m herbenzo.cli suggest-formats approvals.json tax-43366 \
 | `run <envelope.json>` | Modernize, then adjudicate |
 | `adjudicate` | One claim against one PMID |
 | `suggest-formats <approvals.json> <id>…` | Advisory format ranking |
+| `ayush search "<query>"` | Bibliographic ARP search. Disabled unless the portal switch is on |
+| `ayush record <ARP_ID>` | One ARP record page |
+| `ayush accept <ARP_ID>` | Store a reviewer accept note. Does not create an ingredient |
 
 ## Contracts impact
 
@@ -183,7 +198,7 @@ Shared `herbenzo-contracts` models are unchanged. `FormulationSpec.ingredient_id
 { "spec": { "...FormulationSpec..." }, "approvals": [], "marker_overrides": [] }
 ```
 
-`research_provenance`, `warnings`, and `classical_active_marker_gap` are siblings of the SKU, not fields on the shared model. No change to `FormulationSpec`, `IngredientSpec`, or `ModernizedSKU` was required.
+`research_provenance`, `warnings`, and `classical_active_marker_gap` are siblings of the SKU, not fields on the shared model. Ayush hits, when the portal was enabled, live on that provenance snapshot. No change to `FormulationSpec`, `IngredientSpec`, or `ModernizedSKU` was required.
 
 A SKU whose every marker is resolved still passes the shared `ModernizedSKU` gate. Pipeline-local annotations (`marker_status`, `standardization`) are stripped before that check, then `marker_status: resolved` is added back on the HTTP body. A SKU with any pending marker is pipeline-local and is not forced through the shared descriptor schema: the shared model requires a PubChem marker, a BCS class, and a delivery technology, and those stay empty on purpose when no marker exists.
 
