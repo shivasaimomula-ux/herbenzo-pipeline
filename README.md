@@ -66,6 +66,7 @@ This UI is Stage B only — not embedded in C/E. It does not change the Moderniz
 | `GET` | `/drafts/{id}` | Load one draft (`spec` is the saved form) |
 | `DELETE` | `/drafts/{id}` | Delete a draft |
 | `POST` | `/modernize` | Body: `FormulationSpec` (herbenzo-contracts) → `ModernizedSKU` |
+| `POST` | `/suggest-formats` | Advisory finished-format ranking for a list of ingredient ids. Does not change `/modernize` |
 
 ```bash
 curl -s http://127.0.0.1:8003/health | python3 -m json.tool
@@ -76,7 +77,33 @@ curl -s -X POST http://127.0.0.1:8003/modernize \
 
 Unknown fields / raised confidence floors → **422** with `herbenzo-contracts`
 `validation_error_body`. Unknown registry ingredient IDs → **422**
-(`unknown_ingredient`).
+(`unknown_ingredient`). The same unknown-id gate applies to `POST /suggest-formats`.
+
+### Suggested modern formats (advisory)
+
+`POST /suggest-formats` ranks finished formats for one or more registry ingredient
+ids. The body is `ingredient_ids` (or `ingredients`) plus optional `audience`,
+`dosage_form`, `product_name`, and `quantities_mg`. Ranking is a curated catalog
+(`herbenzo/data/modern_formats.json`) plus fixed rules. It does not call an LLM
+and it does not change BCS, delivery, or the ModernizedSKU.
+
+The suggestion is **not** added to the `/modernize` body. `herbenzo-contracts`
+models reject unknown fields (`extra="forbid"`), so an extra key on that
+response would fail any consumer that re-validates the payload as a
+ModernizedSKU. Use the separate endpoint.
+
+For a Chyawanprash-like or other classical name (`chyawanprash`, `avaleha`,
+`lehya`, `churna`, and the other tokens in `CLASSICAL_TOKENS`), nanoemulsion
+stays in the ranked list. It is strongly down-ranked and carries an explicit
+owner caution; gummy and soft chew receive a preference bonus.
+
+The Compose tab shows a **Suggested modern formats** panel. A card click fills
+the free-string finished-form field. Advanced / Raw JSON is unchanged.
+
+```bash
+python -m herbenzo.cli suggest-formats HB-AMLA HB-PIPL HB-ASHW \
+  --dosage-form avaleha --product-name Chyawanprash --audience adults
+```
 ---
 
 ## CLI quick start
@@ -100,6 +127,7 @@ python -m herbenzo.cli run examples/ashwagandha.json -o out/report.json
 | `run <spec.json> [-o out.json] [--offline]` | Full pipeline; writes an auditable report |
 | `adjudicate --pmid … --subject … --claim … [--domain safety]` | Adjudicate a single citation |
 | `markers` | List registry ingredients, markers and PubChem CIDs |
+| `suggest-formats <id>…` | Advisory finished-format ranking (does not modernize) |
 
 `--offline` uses only cached descriptors and makes no network calls — use it for
 CI and for reproducible golden-set runs.
@@ -186,8 +214,10 @@ $ python -m herbenzo.cli adjudicate --pmid 37257749 \
 | `herbenzo/components/modernizer/` | BCS classifier, delivery recommender, orchestrator |
 | `herbenzo/pipeline.py` | End-to-end runner and report builder |
 | `herbenzo/cli.py` | Command line |
-| `herbenzo/api.py` | FastAPI: UI at `/`, `GET /health`, `GET /ingredients`, `/drafts`, `POST /modernize` on `:8003` |
-| `herbenzo/static/` | Independent B UI (compose form, drafts, raw JSON) |
+| `herbenzo/api.py` | FastAPI: UI at `/`, `GET /health`, `GET /ingredients`, `/drafts`, `POST /modernize`, `POST /suggest-formats` on `:8003` |
+| `herbenzo/format_suggestions.py` | Advisory format catalog and ranker (does not change ModernizedSKU) |
+| `herbenzo/data/modern_formats.json` | Finished-format catalog, including checked market-reference URLs |
+| `herbenzo/static/` | Independent B UI (compose form, drafts, raw JSON, format panel) |
 | `herbenzo/data/compose_drafts/` | On-disk compose drafts (gitignored; created on save) |
 | `herbenzo/contract_gate.py` | Shared-package FormulationSpec / ModernizedSKU gates |
 | `cache/` | On-disk response cache — delete to force re-retrieval |
