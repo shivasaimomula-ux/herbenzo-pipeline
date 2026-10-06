@@ -261,25 +261,38 @@ def test_clitoria_pending_marker_modernizes_with_provenance_and_gap():
     )
     assert pending.status_code == 200, pending.text
     body = pending.json()
-    assert body["sku"] is None
+    assert body["sku_id"] == "SKU-F-LIVE-1"
+    ingredient = body["ingredients"][0]
+    assert ingredient["botanical_name"] == "Clitoria ternatea"
+    assert ingredient["marker_status"] == "pending"
+    assert ingredient["marker"]["properties"] is None
+    assert ingredient["marker"]["marker_name"] is None
+    assert ingredient["bcs"]["bcs_class"] is None
+    assert ingredient["delivery"]["standardization"] == "unstandardized"
+    assert "marker_pending: Clitoria ternatea" in body["warnings"]
     gap = body["classical_active_marker_gap"]
     assert gap["blocking"] is False
     assert gap["marker_status"] == "pending"
-    assert "marker is pending" in gap["message"]
+    assert gap["release"] == "requires marker before release"
+    assert "Marker pending" in gap["message"]
     assert "/research/marker" in gap["message"]
     assert gap["how_to_add_marker"]["path"] == "/research/marker"
     provenance = body["research_provenance"]["ingredients"][0]
     assert provenance["taxonomy_id"] == 43366
     assert "26120869" in provenance["pmids"]
-    marked = service.set_marker(approval, "clitorin")
+    marked = service.set_marker(approval, "ternatin A1")
     done = client.post(
         "/modernize",
         json={"spec": _spec(marked["ingredient_id"], "Clitoria ternatea"), "approvals": [marked]},
     )
     assert done.status_code == 200, done.text
     sku = done.json()
-    assert sku["ingredients"][0]["marker"]["marker_name"] == "Clitorin"
-    assert sku["ingredients"][0]["marker"]["properties"]["xlogp"] == -2.0
+    assert sku["ingredients"][0]["marker"]["marker_name"] == "Ternatin A1"
+    assert sku["ingredients"][0]["marker_status"] == "resolved"
+    assert sku["ingredients"][0]["marker"]["properties"]["pubchem_cid"] == 16173494
+    assert sku["ingredients"][0]["marker"]["properties"]["xlogp"] is None
+    assert "classical_active_marker_gap" not in sku
+    assert sku["warnings"] == []
     formats = client.post(
         "/suggest-formats",
         json={"ingredient_ids": [approval["ingredient_id"]], "approvals": [approval]},
@@ -316,14 +329,18 @@ def test_compose_approve_posts_the_candidate_and_modernizes_it():
     assert "candidate: lastCandidate" in ui
     assert "not stored in an ingredient list" not in ui
     assert "Nothing is selected for you" in ui
+    assert "No ModernizedSKU because the marker is pending" not in ui
+    assert "marker pending" in ui
     modernized = client.post(
         "/modernize",
         json={"spec": _spec(approval["ingredient_id"], "Clitoria ternatea"), "approvals": [approval]},
     )
     assert modernized.status_code == 200, modernized.text
     body = modernized.json()
-    assert body["sku"] is None
-    assert "marker is pending" in body["classical_active_marker_gap"]["message"]
+    assert body["sku_id"] == "SKU-F-LIVE-1"
+    assert body["ingredients"][0]["marker_status"] == "pending"
+    assert "marker_pending: Clitoria ternatea" in body["warnings"]
+    assert "Marker pending" in body["classical_active_marker_gap"]["message"]
     assert body["classical_active_marker_gap"]["how_to_add_marker"]["method"] == "POST"
     again = client.post("/research/approve", json={"candidate": candidate})
     assert again.status_code == 200

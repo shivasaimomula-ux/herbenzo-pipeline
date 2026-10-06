@@ -148,7 +148,14 @@ def test_classical_missing_marker_flags_and_modernize_returns(dosage_form, produ
     engine = ModernizerEngine(MarkerGapRegistries())
     sku = engine.modernize(_spec(dosage_form=dosage_form, product_name=product_name))
     gap = engine.classical_active_marker_gap
-    assert sku is None
+    assert sku is not None
+    assert sku.sku_id == "SKU-F-CLASS-1"
+    assert sku.ingredients[0].marker_status == "pending"
+    assert sku.ingredients[0].marker.properties is None
+    assert sku.ingredients[0].marker.standardization == "unstandardized"
+    assert sku.ingredients[0].bcs.bcs_class is None
+    assert sku.ingredients[0].delivery.primary is None
+    assert "classical_active_marker_gap" not in sku.model_dump(mode="json")
     assert gap is not None
     assert gap["present"] is True
     assert gap["blocking"] is False
@@ -159,13 +166,24 @@ def test_classical_missing_marker_flags_and_modernize_returns(dosage_form, produ
     assert "marker" in gap["ingredients"][0]["reason"]
 
 
-def test_pipeline_classical_missing_marker_succeeds_without_inventing_sku(tmp_path):
+def test_pipeline_classical_missing_marker_returns_sku_with_pending_flag(tmp_path):
     report = _pipeline().run(_spec())
     gap = report["classical_active_marker_gap"]
     assert gap["present"] is True
     assert gap["blocking"] is False
-    assert report["sku"] is None
-    assert report["claims"] == []
+    assert gap["release"] == "requires marker before release"
+    sku = report["sku"]
+    assert sku["sku_id"] == "SKU-F-CLASS-1"
+    ingredient = sku["ingredients"][0]
+    assert ingredient["ingredient_id"] == "HB-NOMARK"
+    assert ingredient["marker_status"] == "pending"
+    assert ingredient["marker"]["properties"] is None
+    assert ingredient["marker"]["marker_name"] is None
+    assert ingredient["bcs"]["evidence_basis"] == "unstandardized"
+    assert ingredient["delivery"]["primary"] is None
+    assert "marker_pending: Fixture unmarked ingredient" in report["warnings"]
+    assert report["claims"][0]["reason_code"] == "marker_pending"
+    assert "requires a marker before release" in report["claims"][0]["claim"]
     assert report["confidence"]["after_modernization"] == report["confidence"]["inherited_from_A"]
     assert report["confidence"]["after_adjudication"] == report["confidence"]["inherited_from_A"]
     assert report["manifest"]["offline"] is True
@@ -176,9 +194,13 @@ def test_api_classical_missing_marker_is_200_not_422():
     response = client.post("/modernize", json=envelope(_spec(), MarkerGapRegistries()))
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["sku"] is None
+    assert body["sku_id"] == "SKU-F-CLASS-1"
+    assert body["ingredients"][0]["marker_status"] == "pending"
+    assert body["ingredients"][0]["marker"]["properties"] is None
+    assert "marker_pending: Fixture unmarked ingredient" in body["warnings"]
     assert body["classical_active_marker_gap"]["blocking"] is False
     assert body["classical_active_marker_gap"]["advisory_only"] is True
+    assert body["classical_active_marker_gap"]["release"] == "requires marker before release"
 
 
 # ---------------------------------------------------------------------------
@@ -272,8 +294,12 @@ def test_flag_does_not_block_or_penalize_remaining_ingredients():
     assert [i["ingredient_id"] for i in mixed["classical_active_marker_gap"]["ingredients"]] == [
         "HB-NOMARK"
     ]
-    assert [i["ingredient_id"] for i in mixed["sku"]["ingredients"]] == ["HB-TURM"]
+    assert [i["ingredient_id"] for i in mixed["sku"]["ingredients"]] == ["HB-TURM", "HB-NOMARK"]
     assert mixed["sku"]["ingredients"][0]["marker"]["marker_name"] == "Curcumin"
+    pending = mixed["sku"]["ingredients"][1]
+    assert pending["marker_status"] == "pending"
+    assert pending["marker"]["properties"] is None
+    assert "marker_pending: Fixture unmarked ingredient" in mixed["warnings"]
     assert "classical_active_marker_gap" not in mixed["sku"]
 
     assert mixed["confidence"]["after_modernization"] == control["confidence"]["after_modernization"]
@@ -281,7 +307,10 @@ def test_flag_does_not_block_or_penalize_remaining_ingredients():
     assert mixed["confidence"]["after_adjudication"] <= mixed["confidence"]["inherited_from_A"]
     assert mixed["claims"]
     assert {c["verdict"] for c in mixed["claims"]} <= {"computed", "unsupported"}
-    assert len(mixed["claims"]) == len(control["claims"])
+    release = [c for c in mixed["claims"] if c["reason_code"] == "marker_pending"]
+    assert len(release) == 1
+    assert "requires a marker before release" in release[0]["claim"]
+    assert len(mixed["claims"]) == len(control["claims"]) + 1
 
 
 def test_api_mixed_classical_gap_returns_sku_and_indicator():
@@ -299,7 +328,10 @@ def test_api_mixed_classical_gap_returns_sku_and_indicator():
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["sku_id"] == "SKU-F-CLASS-1"
-    assert [i["ingredient_id"] for i in body["ingredients"]] == ["HB-TURM"]
+    assert [i["ingredient_id"] for i in body["ingredients"]] == ["HB-TURM", "HB-NOMARK"]
+    assert body["ingredients"][0]["marker"]["marker_name"] == "Curcumin"
+    assert body["ingredients"][1]["marker_status"] == "pending"
+    assert "marker_pending: Fixture unmarked ingredient" in body["warnings"]
     assert body["classical_active_marker_gap"]["blocking"] is False
     assert body["confidence"] <= raw["confidence"]
     assert body["inherited_confidence"] == raw["confidence"]
@@ -317,14 +349,18 @@ def test_non_classical_missing_marker_is_a_gap_not_an_error():
             dosage_form="capsule",
         )
     )
-    assert sku is None
+    assert sku is not None
+    assert sku.ingredients[0].marker_status == "pending"
+    assert sku.ingredients[0].marker.properties is None
     assert engine.classical_active_marker_gap is not None
     assert engine.classical_active_marker_gap["blocking"] is False
 
 
 def test_pipeline_non_classical_missing_marker_does_not_raise():
     report = _pipeline().run(_spec(product_name="Unmarked capsule", dosage_form="capsule"))
-    assert report["sku"] is None
+    assert report["sku"]["sku_id"] == "SKU-F-CLASS-1"
+    assert report["sku"]["ingredients"][0]["marker_status"] == "pending"
+    assert "marker_pending: Fixture unmarked ingredient" in report["warnings"]
     assert report["classical_active_marker_gap"]["blocking"] is False
 
 
@@ -339,7 +375,10 @@ def test_api_non_classical_missing_marker_is_200():
     )
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["sku"] is None
+    assert body["sku_id"] == "SKU-F-CLASS-1"
+    assert body["ingredients"][0]["marker_status"] == "pending"
+    assert body["ingredients"][0]["marker"]["properties"] is None
+    assert "marker_pending: Fixture unmarked ingredient" in body["warnings"]
     assert body["classical_active_marker_gap"]["blocking"] is False
     assert "research_provenance" in body
 

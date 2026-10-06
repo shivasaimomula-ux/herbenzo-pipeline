@@ -23,9 +23,13 @@ from herbenzo.schemas.contracts import FormulationSpec
 __all__ = [
     "CLASSICAL_PREPARATION_FORMS",
     "INDICATOR_CODE",
+    "RELEASE_REQUIREMENT",
     "classical_active_marker_gap",
+    "marker_warnings",
     "matched_classical_forms",
 ]
+
+RELEASE_REQUIREMENT = "requires marker before release"
 
 INDICATOR_CODE = "classical_active_marker_gap"
 
@@ -66,16 +70,19 @@ _HOW_TO_ADD = (
     "Then POST /modernize again with that updated approval. A name alone is not enough."
 )
 
-_MESSAGE_NO_SKU = (
-    "No ModernizedSKU because the marker is pending. "
-    "This approved ingredient has no PubChem standardization marker, so no chemistry-backed SKU was built. "
+_MESSAGE_ALL_PENDING = (
+    "Marker pending. The SKU is returned with each unmarked ingredient flagged unstandardized. "
+    "QC, specification, and label fields that need a marker stay pending. "
+    "This does not block SKU generation. Release requires a marker. "
     "The indicator does not change the confidence floor. "
     + _HOW_TO_ADD
 )
 
 _MESSAGE_PARTIAL = (
-    "Marker pending on some approved ingredients, so those ingredients were left out of the SKU. "
-    "Marker-backed ingredients were still modernized. The indicator does not change the confidence floor. "
+    "Marker pending on some approved ingredients. Those ingredients stay in the SKU as unstandardized. "
+    "Marker-backed ingredients keep their chemistry. "
+    "This does not block SKU generation. Release requires a marker on each pending ingredient. "
+    "The indicator does not change the confidence floor. "
     + _HOW_TO_ADD
 )
 
@@ -142,7 +149,8 @@ def classical_active_marker_gap(
         "formulation_id": spec.formulation_id,
         "product_name": spec.product_name,
         "dosage_form": spec.dosage_form,
-        "message": _MESSAGE_NO_SKU if all_pending else _MESSAGE_PARTIAL,
+        "message": _MESSAGE_ALL_PENDING if all_pending else _MESSAGE_PARTIAL,
+        "release": RELEASE_REQUIREMENT,
         "how_to_add_marker": {
             "method": "POST",
             "path": "/research/marker",
@@ -151,3 +159,17 @@ def classical_active_marker_gap(
         },
         "ingredients": gaps,
     }
+
+
+def marker_warnings(gap: dict | None) -> list[str]:
+    """Top-level ``marker_pending`` warnings. Empty when every ingredient has a marker."""
+    if not gap:
+        return []
+    warnings: list[str] = []
+    for item in gap.get("ingredients") or []:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("botanical_name") or item.get("ingredient_id") or "").strip()
+        if label:
+            warnings.append(f"marker_pending: {label}")
+    return warnings

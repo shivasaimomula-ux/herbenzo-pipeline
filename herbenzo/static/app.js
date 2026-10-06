@@ -828,9 +828,9 @@ function renderOneAdvisory(item) {
       .join("");
     return `
       <div class="advisory-item">
-        <strong>Marker pending — no chemistry-backed SKU for this ingredient</strong>
+        <strong>Marker pending — this ingredient stays on the SKU, unstandardized</strong>
         <p>${escapeHtml(gap.message || "marker pending")}</p>
-        <p>Adjudication: POST /research/marker with this approval and a specific marker_name, then modernize again. This does not block other marker-backed ingredients.</p>
+        <p>Release requires a marker. QC, specification, and label fields that need a marker stay pending. POST /research/marker with this approval and a specific marker_name, then modernize again. This does not block the SKU.</p>
         ${lines ? `<ul>${lines}</ul>` : ""}
       </div>`;
   }
@@ -896,6 +896,10 @@ function renderSku(sku, rawBody) {
         .join(" → "),
     ]);
   }
+  const warnings = rawBody && Array.isArray(rawBody.warnings) ? rawBody.warnings.filter(Boolean) : [];
+  if (warnings.length) {
+    summaryRows.push(["Warnings", warnings.join("; ")]);
+  }
   el.skuSummary.innerHTML = summaryRows
     .map(
       ([k, v]) =>
@@ -909,18 +913,29 @@ function renderSku(sku, rawBody) {
       const marker = ing.marker || {};
       const bcs = ing.bcs || {};
       const delivery = ing.delivery || {};
-      const markerName = marker.marker_name || "—";
-      const proxy = marker.is_proxy ? " (proxy)" : "";
-      const bcsClass = bcs.bcs_class != null ? `Class ${bcs.bcs_class}` : "—";
-      const bcsBits = [
-        bcs.solubility_call ? `solubility ${bcs.solubility_call}` : null,
-        bcs.permeability_call ? `permeability ${bcs.permeability_call}` : null,
-        bcs.evidence_basis ? `basis ${bcs.evidence_basis}` : null,
-        typeof bcs.confidence === "number" ? `conf ${pct(bcs.confidence)}` : null,
-      ]
-        .filter(Boolean)
-        .join(" · ");
-      const primary = String(delivery.primary || "—").replaceAll("_", " ");
+      const pending =
+        ing.marker_status === "pending" || marker.marker_status === "pending";
+      const markerName = pending ? "unstandardized" : marker.marker_name || "—";
+      const proxy = !pending && marker.is_proxy ? " (proxy)" : "";
+      const flag = pending ? `<span class="marker-flag">marker pending</span>` : "";
+      const bcsClass = pending
+        ? "unstandardized"
+        : bcs.bcs_class != null
+          ? `Class ${bcs.bcs_class}`
+          : "—";
+      const bcsBits = pending
+        ? "no class until a marker is set"
+        : [
+            bcs.solubility_call ? `solubility ${bcs.solubility_call}` : null,
+            bcs.permeability_call ? `permeability ${bcs.permeability_call}` : null,
+            bcs.evidence_basis ? `basis ${bcs.evidence_basis}` : null,
+            typeof bcs.confidence === "number" ? `conf ${pct(bcs.confidence)}` : null,
+          ]
+            .filter(Boolean)
+            .join(" · ");
+      const primary = pending
+        ? "unstandardized — requires a marker before release"
+        : String(delivery.primary || "—").replaceAll("_", " ");
       const alts = Array.isArray(delivery.alternatives)
         ? delivery.alternatives.map((a) => String(a).replaceAll("_", " ")).join(", ")
         : "";
@@ -929,8 +944,8 @@ function renderSku(sku, rawBody) {
 
       return `
         <article class="ingredient" style="animation-delay: ${0.05 * idx}s">
-          <h3>${escapeHtml(ing.ingredient_id || "ingredient")}</h3>
-          <p class="sub">${escapeHtml(ing.botanical_name || "")}${
+          <h3>${escapeHtml(ing.botanical_name || ing.ingredient_id || "ingredient")}${flag}</h3>
+          <p class="sub">${escapeHtml(ing.ingredient_id || "")}${
             ing.quantity_mg != null ? ` · ${escapeHtml(ing.quantity_mg)} mg` : ""
           }${
             ing.marker_dose_mg != null
@@ -985,26 +1000,23 @@ function showModernizeSuccess(body) {
   const hasAdvisory = renderAdvisoryBanner(body);
   if (!sku) {
     el.resultPanel.hidden = false;
-    el.resultMeta.textContent = hasAdvisory
-      ? "No ModernizedSKU because the marker is pending"
-      : "No ModernizedSKU in the response";
-    el.skuSummary.innerHTML = `<div><dt>ModernizedSKU</dt><dd>none — marker pending</dd></div>`;
+    el.resultMeta.textContent = "No ModernizedSKU in the response";
+    el.skuSummary.innerHTML = `<div><dt>ModernizedSKU</dt><dd>missing</dd></div>`;
     el.ingredientCards.innerHTML = "";
     el.rawJson.textContent = JSON.stringify(body, null, 2);
-    const gap = body && body.classical_active_marker_gap;
-    setStatus(
-      "ok",
-      gap && gap.message
-        ? gap.message
-        : "No ModernizedSKU because the marker is pending. Add one with POST /research/marker, then modernize again."
-    );
+    setStatus("error", "Modernize did not return a SKU.");
     el.resultPanel.scrollIntoView({ behavior: "smooth", block: "start" });
     return;
   }
-  const advisoryNote = hasAdvisory ? " · advisory" : "";
+  const warnings = Array.isArray(body && body.warnings) ? body.warnings.filter(Boolean) : [];
+  const pendingNote = warnings.length
+    ? ` · ${warnings.join("; ")}`
+    : hasAdvisory
+      ? " · marker pending"
+      : "";
   setStatus(
     "ok",
-    `Modernized · ${sku.sku_id || "SKU"} · confidence ${pct(sku.confidence)}${advisoryNote}`
+    `Modernized · ${sku.sku_id || "SKU"} · confidence ${pct(sku.confidence)}${pendingNote}`
   );
   renderSku(sku, body);
   el.resultPanel.scrollIntoView({ behavior: "smooth", block: "start" });

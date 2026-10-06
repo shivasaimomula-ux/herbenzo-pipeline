@@ -39,6 +39,7 @@ from herbenzo.contract_gate import (
 from herbenzo.format_suggestions import suggest_from_payload
 from herbenzo.research_api import router as research_router
 from herbenzo.services.llm_config import validate_llm_settings
+from herbenzo.services.classical_marker_gap import marker_warnings
 from herbenzo.services.records import (
     ResearchError,
     UnknownMarker,
@@ -48,6 +49,7 @@ from herbenzo.services.records import (
 )
 from herbenzo.services.research import stored_pubmed_count
 from herbenzo_contracts import CONTRACT_SCHEMA_VERSION
+from herbenzo_contracts.provenance import extend_from_handoff
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 _DEFAULT_DRAFTS_DIR = Path(__file__).resolve().parent / "data" / "compose_drafts"
@@ -393,6 +395,29 @@ def _split_modernize_body(payload: dict[str, Any]) -> tuple[dict[str, Any], list
     return payload, [], None
 
 
+def _ingredient_pending(ingredient: dict[str, Any]) -> bool:
+    if ingredient.get("marker_status") == "pending":
+        return True
+    marker = ingredient.get("marker")
+    return isinstance(marker, dict) and marker.get("marker_status") == "pending"
+
+
+def _provenance_thread_payload(spec, sku_id: str) -> dict[str, Any]:
+    thread = extend_from_handoff(
+        spec.provenance_thread,
+        stage="B",
+        payload={
+            "spec_id": spec.source_spec_id,
+            "formulation_id": spec.formulation_id,
+            "sku_id": sku_id,
+        },
+        sku_id=sku_id,
+        formulation_id=spec.formulation_id,
+        spec_id=spec.source_spec_id,
+    )
+    return thread.model_dump(mode="json")
+
+
 @app.post("/modernize")
 async def modernize(request: Request):
     """Modernize an approved research snapshot.
@@ -444,17 +469,20 @@ async def modernize(request: Request):
     try:
         sku = engine.modernize(to_engine_payload(spec))
         marker_gap = engine.classical_active_marker_gap
-        if sku is None:
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "sku": None,
-                    "classical_active_marker_gap": marker_gap,
-                    "research_provenance": provenance,
-                },
-            )
-        outbound = validate_outbound_modernized_sku(sku)
-        outbound = attach_provenance_thread(spec, outbound)
+        local = json.loads(sku.model_dump_json())
+        pending = any(_ingredient_pending(ing) for ing in local.get("ingredients") or [])
+        # Shared ModernizedSKU requires a PubChem marker block. A pending
+        # ingredient has none on purpose, so that gate runs only when every
+        # marker is resolved. Shared models stay unchanged.
+        if pending:
+            body = local
+            body["provenance_thread"] = _provenance_thread_payload(spec, sku.sku_id)
+        else:
+            outbound = validate_outbound_modernized_sku(sku)
+            outbound = attach_provenance_thread(spec, outbound)
+            body = outbound.model_dump(mode="json")
+            for ingredient in body.get("ingredients") or []:
+                ingredient["marker_status"] = "resolved"
     except ResearchError as exc:
         raise HTTPException(status_code=exc.status_code, detail=_research_detail(exc)) from exc
     except UnknownMarker as exc:
@@ -465,9 +493,9 @@ async def modernize(request: Request):
     except (ValidationError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=http_error_detail(exc)) from exc
 
-    body = outbound.model_dump(mode="json")
     if marker_gap is not None:
         body["classical_active_marker_gap"] = marker_gap
+    body["warnings"] = marker_warnings(marker_gap)
     body["research_provenance"] = provenance
     return JSONResponse(content=body)
 

@@ -93,7 +93,7 @@ Delphinidin 3-glucoside (443650), rutin (5280805), and taraxerol (92097) occur i
 
 `/modernize` itself does not look up PubChem. A `marker_overrides` entry that is only a name, without a verified PubChem block (`pubchem_cid`, molecular weight, TPSA, HBD, HBA, rotatable bonds), returns `marker_unverified` and tells the caller to use `POST /research/marker` first. XLogP on that block is optional.
 
-An approved ingredient with no marker is not a failure. `/modernize` still runs. Any approved ingredient with an empty marker list sets `classical_active_marker_gap` beside the SKU (the code name is unchanged; it is no longer limited to classical dosage forms). When no ingredient has a marker, `sku` stays null. The gap says the marker is pending and how to add one: `POST /research/marker` with this approval and a specific `marker_name`, then modernize again. Mixed formulas modernize the marker-backed ingredients and flag the rest.
+An approved ingredient with no marker is not a failure. `/modernize` still returns a full SKU. Each unmarked ingredient is `marker_status: pending` and unstandardized: marker properties, BCS class, and delivery technology stay empty rather than invented. The response adds `warnings` such as `marker_pending: <botanical name>` and `classical_active_marker_gap` (the code name is unchanged; it is no longer limited to classical dosage forms). The gap includes `release: requires marker before release` and how to add one: `POST /research/marker` with this approval and a specific `marker_name`, then modernize again. Downstream claims say that ingredient requires a marker before release. Those claims do not block SKU generation and do not lower confidence. Mixed formulas keep marker-backed chemistry and flag the rest on the same SKU.
 
 `/suggest-formats` accepts marker-less approvals. Their solubility is `unknown`. Solubilizing formats are penalized only when every profile has solubility `high`.
 
@@ -101,7 +101,7 @@ The berberine P-gp efflux flag is a classifier rule. It is honored only when the
 
 ### Provenance
 
-`research_provenance` sits beside the ModernizedSKU, same pattern as `classical_active_marker_gap`. `herbenzo-contracts` `ModernizedSKU` uses `extra="forbid"`, so the field is not inside the SKU. The snapshot records taxonomy id, PMIDs, CIDs, URLs, retrieval times, PubChem numerics, the approval decision, and `name_match` (the query, scientific name, tax id, and which source produced the name). It is part of the response, not a database. When `sku` is null the provenance object is still returned.
+`research_provenance`, `warnings`, and `classical_active_marker_gap` sit beside the ModernizedSKU. `herbenzo-contracts` `ModernizedSKU` uses `extra="forbid"`, so those fields are not inside the shared model. The snapshot records taxonomy id, PMIDs, CIDs, URLs, retrieval times, PubChem numerics, the approval decision, and `name_match` (the query, scientific name, tax id, and which source produced the name). It is part of the response, not a database. A pending-marker SKU is still returned with that provenance.
 
 ## Research front door
 
@@ -121,7 +121,7 @@ Guardrails:
 
 ## Butterfly pea
 
-*Clitoria ternatea* (NCBI taxid 43366, species, Fabaceae) is the worked example. Quoted `pccompound` is empty, so approval does not depend on a marker. With at least one stored PubMed article the candidate can be approved with `marker_status: pending`. Modernize then returns `sku: null`, the gap flag, and provenance. Naming clitorin on `POST /research/marker` attaches CID 11592917 and a later modernize can emit a SKU. Naming bare `ternatin` does not.
+*Clitoria ternatea* (NCBI taxid 43366, species, Fabaceae) is the worked example. Quoted `pccompound` is empty, so approval does not depend on a marker. With at least one stored PubMed article the candidate can be approved with `marker_status: pending`. Modernize then returns a full SKU with that ingredient `marker_status: pending`, `warnings: ["marker_pending: Clitoria ternatea"]`, the gap flag, and provenance. Naming Ternatin A1 on `POST /research/marker` attaches CID 16173494, clears the pending flag, and a later modernize emits a chemistry-backed SKU. Missing XLogP on that record does not block it. Naming bare `ternatin` does not attach a marker.
 
 Mechanism references used in the fixtures: PMID 26120869 (ternatins inhibit NF-κB/iNOS), 18926895, 14568080, 34975979, 21214440, 12490229.
 
@@ -183,7 +183,9 @@ Shared `herbenzo-contracts` models are unchanged. `FormulationSpec.ingredient_id
 { "spec": { "...FormulationSpec..." }, "approvals": [], "marker_overrides": [] }
 ```
 
-`research_provenance` and `classical_active_marker_gap` are siblings of the validated SKU, not fields on it. No change to `FormulationSpec`, `IngredientSpec`, or `ModernizedSKU` was required.
+`research_provenance`, `warnings`, and `classical_active_marker_gap` are siblings of the SKU, not fields on the shared model. No change to `FormulationSpec`, `IngredientSpec`, or `ModernizedSKU` was required.
+
+A SKU whose every marker is resolved still passes the shared `ModernizedSKU` gate. Pipeline-local annotations (`marker_status`, `standardization`) are stripped before that check, then `marker_status: resolved` is added back on the HTTP body. A SKU with any pending marker is pipeline-local and is not forced through the shared descriptor schema: the shared model requires a PubChem marker, a BCS class, and a delivery technology, and those stay empty on purpose when no marker exists.
 
 ## What the pipeline still enforces
 
@@ -195,7 +197,7 @@ Shared `herbenzo-contracts` models are unchanged. `FormulationSpec.ingredient_id
 6. Per-run manifest with retrieval dates.
 7. Stable `CLM-…` claim ids.
 8. No uncited numeric fold-change.
-9. A missing marker is advisory. `classical_active_marker_gap` is attached for any approved ingredient with an empty marker list. It does not 422 and it does not lower confidence.
+9. A missing marker is advisory. `/modernize` still returns the SKU. `classical_active_marker_gap` and `warnings` name each pending ingredient. Release claims say a marker is required. The gap does not 422 and it does not lower confidence.
 
 ## The adjudicator
 

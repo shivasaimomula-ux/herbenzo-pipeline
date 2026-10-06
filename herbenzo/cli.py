@@ -74,8 +74,13 @@ def _cmd_run(args) -> int:
     print(f"  confidence     : A={c['inherited_from_A']} "
           f"-> B={c['after_modernization']} -> adjudicated={c['after_adjudication']}")
     print(f"  citations      : {report['citation_summary']}")
+    warnings = report.get("warnings") or []
+    if warnings:
+        print("  warnings       : " + "; ".join(warnings))
     if gap:
         print("  indicator      : classical_active_marker_gap (advisory, does not block)")
+        if gap.get("release"):
+            print(f"                   release: {gap['release']}")
         if gap.get("message"):
             print(f"                   {gap['message']}")
         for item in gap.get("ingredients") or []:
@@ -86,11 +91,17 @@ def _cmd_run(args) -> int:
             print(f"                   - {g}")
     print("\n  BCS classification")
     if not sku or not sku["ingredients"]:
-        print("    (no marker-backed ingredient)")
+        print("    (no ingredients)")
     else:
         for ing in sku["ingredients"]:
-            print(f"    {ing['marker']['marker_name']:<40s} class {ing['bcs']['bcs_class']:<4s}"
-                  f" -> {ing['delivery']['primary']}")
+            marker = ing.get("marker") or {}
+            pending = ing.get("marker_status") == "pending" or marker.get("marker_status") == "pending"
+            if pending:
+                print(f"    {ing.get('botanical_name', ing.get('ingredient_id', '')):<40s} marker pending (unstandardized)")
+            else:
+                bcs_class = str((ing.get("bcs") or {}).get("bcs_class") or "")
+                primary = str((ing.get("delivery") or {}).get("primary") or "")
+                print(f"    {marker.get('marker_name', ''):<40s} class {bcs_class:<4s} -> {primary}")
     print(f"\n  report written : {out}\n")
     return 0
 
