@@ -186,12 +186,27 @@ $ python -m herbenzo.cli adjudicate --pmid 37257749 \
 
 The stock registry stays the curated `HB-*` table. Enrichment grows it only after a person approves a candidate.
 
-1. **Propose.** `POST /enrich/propose` with a species or common name. NCBI Taxonomy resolves the organism. Candidate marker CIDs come from PubChem (E-utilities `pccompound` search, then PUG-REST properties). PubMed, Gene, and Protein supply citations and organism-linked records. Chemical taxonomy is attached per marker: ClassyFire/ChemOnt kingdom → superclass → class → subclass → direct parent (PubChem classification when it is complete, otherwise the keyless ClassyFire API by InChIKey) and NP Classifier pathway / superclass / class from GNPS when a SMILES string is present. A missing classification is stored as `unavailable`; it does not fail the proposal.
+1. **Propose.** `POST /enrich/propose` with a species or common name. NCBI Taxonomy resolves the accepted Latin binomial first. If a local IMPPAT 3.0 cache is present, that binomial and the NCBI synonyms are looked up for Ayurvedic context (see below). The lookup is advisory and never fails the proposal. Candidate marker CIDs come from PubChem (E-utilities `pccompound` search, then PUG-REST properties). PubMed, Gene, and Protein supply citations and organism-linked records. Chemical taxonomy is attached per marker: ClassyFire/ChemOnt kingdom → superclass → class → subclass → direct parent (PubChem classification when it is complete, otherwise the keyless ClassyFire API by InChIKey) and NP Classifier pathway / superclass / class from GNPS when a SMILES string is present. A missing classification is stored as `unavailable`; it does not fail the proposal.
 2. **Enrich.** Physicochemical numbers (molecular weight, XLogP, TPSA, H-bond counts, rotatable bonds, CID) are copied from PubChem with source URL and retrieval time. The optional LLM only ranks the PubChem marker names and writes a justification. If `HERBENZO_LLM_API_KEY` is unset, that step is `unavailable` and the candidate is still stored. Numeric keys in an LLM payload are discarded.
 3. **Gate.** The bundle is a pending JSON file under `herbenzo/data/registry_overlay/candidates/` (`HERBENZO_REGISTRY_DIR` overrides the directory). It does not appear in `GET /ingredients`. Submitting its proposed id to `POST /modernize` returns **422** `unknown_ingredient`.
 4. **Commit.** Approve assigns the proposed `HB-*` id and writes `approved/<id>.json`, including the PubChem descriptor record Stage B needs. Reject records the decision and does not create a row. After approval, Compose and Stage B treat the row like a stock ingredient.
 
 NCBI E-utilities and PubChem PUG-REST work with no API key (3 requests/second). Set `NCBI_API_KEY` to use 10 requests/second. `NCBI_EMAIL` and `NCBI_TOOL` are sent when set. Copy `.env.example` to `.env` at the repo root; process environment variables win over that file. Do not commit `.env`.
+
+### IMPPAT 3.0 (optional, after NCBI)
+
+Validation order: NCBI Taxonomy resolves the accepted binomial. Only then, and only when local files are available, IMPPAT adds Ayurvedic context to the enrichment candidate: Sanskrit/IAST ingredient names, original and standardised plant parts, AFI/API formulation context, family, common names, Latin synonyms, and linked phytochemical identifiers when that table is present. The block is stored on the candidate as `imppat` with `source` `IMPPAT 3.0`, the file name, and the file timestamp. It is **advisory**. `matched`, `no_match`, `ambiguous`, and `unavailable` all leave the candidate pending and approvable. A missing hit does not return 422. Unknown ingredient ids submitted to `POST /modernize` still return 422, and `GET /ingredients` still lists approved rows only.
+
+Enable it by placing these TSVs in `data/external/imppat/cache/` (or another directory and setting `HERBENZO_IMPPAT_DIR`; `off` disables the lookup):
+
+- `Plant_Information_IMPPAT.tsv`
+- `IMPPAT_SingleHerbalFormulations.tsv`
+- `IMPPAT_PolyHerbalFormulations.tsv`
+- `IMPPAT_Phytochemical_Plant_Association.tsv` (optional)
+
+The plant table has no Sanskrit column. Sanskrit/IAST names are read from the API formulation title and the AFI ingredient title. Headers were checked against the 30 September 2026 batch files; the loader also accepts `standardized` spellings and ignores unknown columns. An empty, missing, or unreadable cache is `unavailable`.
+
+IMPPAT is licensed **CC BY-NC-ND 4.0**. Use the local files for research only. Do not commit them (the cache directory is gitignored). Written permission from IMSc is recommended before any product-facing use. This repository does not grant that permission.
 
 The **Review candidates** tab is separate from the Compose picker. It does not add unapproved herbs to the formulation.
 
@@ -206,6 +221,7 @@ The **Review candidates** tab is separate from the Compose picker. It does not a
 | `herbenzo/clients/chemclass.py` | ClassyFire/ChemOnt and NP Classifier lookups, cached |
 | `herbenzo/clients/llm.py` | Optional OpenAI-compatible justification. Skipped when no key is set |
 | `herbenzo/services/enrichment.py` | Propose → enrich → approve/reject |
+| `herbenzo/services/imppat.py` | Optional local IMPPAT 3.0 context after NCBI Taxonomy |
 | `herbenzo/config.py` | Loads repo-root `.env` without overriding existing environment variables |
 | `herbenzo/services/evidence.py` | Evidence store + manifest stamps over the shared cache |
 | `herbenzo/services/adjudication.py` | Citation adjudication service |

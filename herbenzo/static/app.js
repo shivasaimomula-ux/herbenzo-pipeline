@@ -1183,6 +1183,29 @@ el.input.addEventListener("input", () => {
 });
 el.input.value = JSON.stringify(SAMPLE_SPEC, null, 2);
 
+function imppatLine(block) {
+  if (!block) return "IMPPAT 3.0: not attached. Advisory only.";
+  const status = block.status || "unavailable";
+  const files = (block.files || [])
+    .map((file) => file.name)
+    .filter(Boolean)
+    .join(", ");
+  const sanskrit = (block.sanskrit_names || []).slice(0, 6).join(", ");
+  const forms = (block.formulations || [])
+    .slice(0, 4)
+    .map((row) => row.formulation_name || row.formulation_id)
+    .filter(Boolean)
+    .join(", ");
+  const parts = [
+    `IMPPAT 3.0: ${status} (advisory)`,
+    files ? `files ${files}` : "",
+    block.retrieved_at ? `retrieved ${block.retrieved_at}` : "",
+    sanskrit ? `Sanskrit/IAST ${sanskrit}` : "",
+    forms ? `formulations ${forms}` : "",
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
 function taxonomyLine(block) {
   if (!block) return "No classification retrieved.";
   if (block.status === "unavailable") return `Unavailable${block.error ? ` — ${block.error}` : ""}`;
@@ -1229,6 +1252,7 @@ function renderCandidateDetail(doc) {
     <article class="candidate-card">
       <h3>${escapeHtml(doc.query || "candidate")} · ${escapeHtml(doc.status || "")}</h3>
       <p>${escapeHtml((doc.taxonomy && doc.taxonomy.scientific_name) || "")} · proposed ${escapeHtml(doc.proposed_ingredient_id || "—")} · not in the Compose picker until approved</p>
+      <p>${escapeHtml(imppatLine(doc.imppat))}</p>
       <p>${escapeHtml(justification.status === "ok" ? justification.narrative || "" : "LLM justification unavailable.")}</p>
       ${pending ? `<div class="actions"><button type="button" class="primary" data-approve-candidate="${escapeHtml(doc.candidate_id)}">Approve</button><button type="button" class="ghost" data-reject-candidate="${escapeHtml(doc.candidate_id)}">Reject</button></div>` : ""}
     </article>

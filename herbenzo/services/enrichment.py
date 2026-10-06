@@ -16,6 +16,7 @@ from herbenzo.clients.eutils import EutilsClient, EutilsError
 from herbenzo.clients.llm import LlmClient
 from herbenzo.clients.pubchem_lookup import PubChemLookup, PubChemLookupError
 from herbenzo.config import get_settings
+from herbenzo.services.imppat import ImppatLookup
 from herbenzo.services.candidate_store import CandidateStore
 from herbenzo.services.enrich_parse import (
     gene_from_summary,
@@ -49,12 +50,14 @@ class EnrichmentService:
         chemclass: ChemicalTaxonomyClient | None = None,
         llm: LlmClient | None = None,
         store: CandidateStore | None = None,
+        imppat: ImppatLookup | None = None,
     ) -> None:
         self.eutils = eutils if eutils is not None else EutilsClient()
         self.pubchem = pubchem if pubchem is not None else PubChemLookup()
         self.chemclass = chemclass if chemclass is not None else ChemicalTaxonomyClient()
         self.llm = llm if llm is not None else LlmClient()
         self.store = store if store is not None else CandidateStore()
+        self.imppat = imppat
 
     def propose(
         self,
@@ -71,6 +74,7 @@ class EnrichmentService:
         max_pmids = max(0, min(int(max_pmids), 10))
 
         taxonomy = self._taxonomy(name)
+        imppat = self._imppat_context(taxonomy)
         scientific = taxonomy["scientific_name"] or name
         markers = self._markers(scientific, max_markers=max_markers)
         literature = self._literature(scientific, max_pmids=max_pmids)
@@ -94,6 +98,7 @@ class EnrichmentService:
             "numeric_policy": "pubchem_only",
             "llm_numerics_applied": False,
             "taxonomy": taxonomy,
+            "imppat": imppat,
             "literature": literature,
             "genes": genes,
             "proteins": proteins,
@@ -240,6 +245,12 @@ class EnrichmentService:
         record["retrieved_at"] = retrieved_at
         return record
 
+    def _imppat_context(self, taxonomy: dict[str, Any]) -> dict[str, Any]:
+        """Ayurvedic context after the binomial is known. Never raises."""
+        lookup = self.imppat if self.imppat is not None else ImppatLookup(get_settings().imppat_dir)
+        synonyms = taxonomy.get("synonyms") if isinstance(taxonomy.get("synonyms"), list) else []
+        return lookup.lookup(str(taxonomy.get("scientific_name") or ""), synonyms)
+
     def _markers(self, scientific_name: str, *, max_markers: int) -> list[dict[str, Any]]:
         try:
             found = self.eutils.search("pccompound", f'"{scientific_name}"', retmax=max_markers)
@@ -383,6 +394,7 @@ def build_enrichment_service() -> EnrichmentService:
             model=settings.llm_model,
         ),
         store=CandidateStore(settings.registry_dir),
+        imppat=ImppatLookup(settings.imppat_dir),
     )
 
 
@@ -394,6 +406,7 @@ def summarize_candidate(doc: dict[str, Any]) -> dict[str, Any]:
         "status": doc.get("status"),
         "query": doc.get("query"),
         "scientific_name": taxonomy.get("scientific_name"),
+        "imppat_status": (doc.get("imppat") or {}).get("status"),
         "proposed_ingredient_id": doc.get("proposed_ingredient_id"),
         "marker_names": [marker.get("name") for marker in doc.get("markers") or []],
         "created_at": doc.get("created_at"),
