@@ -88,6 +88,44 @@ class LlmClient:
             "error": None,
         }
 
+    def binomial_hints(self, query: str) -> list[str] | None:
+        """Latin binomials for a traditional name.
+
+        ``None`` means the LLM is not configured. An empty list means the
+        model returned nothing usable. Raises ``LlmError`` when the call fails
+        so the caller can keep the other name sources.
+        """
+        from herbenzo.services.llm_config import validate_llm_settings
+
+        verdict = validate_llm_settings(api_key=self.api_key, base_url=self.base_url, model=self.model)
+        if verdict["status"] != "ok":
+            return None
+        content = self._complete(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You suggest Latin species binomials for a common, Ayurvedic, "
+                        "Sanskrit, or Hindi name. Reply with a JSON object "
+                        "{\"binomials\": [\"Genus species\"]}. "
+                        "Include every species that name is used for. "
+                        "Do not include genera, families, or common names. "
+                        "If you are unsure, return an empty list. "
+                        "Do not include PMIDs, CIDs, or physicochemical numbers."
+                    ),
+                },
+                {"role": "user", "content": query},
+            ]
+        )
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise LlmError("LLM binomial response was not JSON") from exc
+        raw = payload.get("binomials") if isinstance(payload, dict) else None
+        if not isinstance(raw, list):
+            return []
+        return [str(item).strip() for item in raw if str(item).strip()]
+
     def _complete(self, messages: list[dict[str, str]]) -> str:
         url = f"{self.base_url}/chat/completions"
         body = json.dumps(
@@ -156,3 +194,5 @@ def _urllib_post(url: str, body: bytes, headers: dict[str, str], timeout_s: floa
     except urllib.error.HTTPError as exc:
         raw = exc.read() if exc.fp is not None else b""
         return int(exc.code), raw
+    except urllib.error.URLError as exc:
+        raise LlmError(f"LLM request failed: {exc.reason}") from exc

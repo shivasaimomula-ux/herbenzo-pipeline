@@ -102,13 +102,19 @@
             <button type="button" class="ghost" id="add-ingredient">Add empty row</button>
           </div>
         </div>
-        <p class="hint">Product name is the formulation (Chyawanprash, Triphala), not one herb. Search the registry and add every herb. Each row keeps its own part, amount, extract ratio, and marker. Options come only from <code>GET /ingredients</code>. Pending enrichment candidates are not listed.</p>
+        <p class="hint">Free text is the primary ingredient input. Suggestions come from live NCBI Taxonomy, GBIF vernacular names, and Wikidata (English, Hindi, Sanskrit, and Telugu). Each row shows the scientific name, tax id, and which source suggested it. If more than one taxon matches, every match is listed and none is selected for you. A suggestion is not approval. Research, then approve. Approve keeps the result on this formulation.</p>
         <div class="picker">
           <label class="field">
-            Search registry
-            <input id="ingredient-search" type="search" placeholder="Search common name, botanical name, or HB id" autocomplete="off" />
+            Live species search
+            <input id="ingredient-search" type="search" placeholder="Type a scientific or common name" autocomplete="off" />
           </label>
+          <p id="ingredient-suggest-status" class="hint" aria-live="polite"></p>
           <ul id="ingredient-suggest" class="suggest" hidden></ul>
+          <div class="actions">
+            <button type="button" class="primary" id="ingredient-research">Research</button>
+            <button type="button" class="ghost" id="ingredient-approve">Approve</button>
+          </div>
+          <div id="research-evidence" class="hint"></div>
           <div id="ingredient-chips" class="chips" aria-live="polite"></div>
         </div>
         <div id="ingredient-editors" class="ing-editors"></div>
@@ -145,7 +151,7 @@
       </div>
 
       <div id="review-panel" role="tabpanel" aria-labelledby="tab-review" hidden>
-        <p class="hint">Propose a species, then approve or reject the evidence bundle. Approval writes a curated <code>HB-*</code> row. Until then the herb is absent from the Compose picker and Stage B returns 422.</p>
+        <p class="hint">Research runs live NCBI and PubChem lookups. Approval is kept on this draft only. It is not written to an ingredient list. Compose suggestions also ask GBIF and Wikidata for common names, then confirm each binomial on NCBI.</p>
         <div class="field-grid">
           <label class="field">
             Species or common name
@@ -157,8 +163,8 @@
           </label>
         </div>
         <div class="run-row">
-          <button type="button" class="primary" id="enrich-propose">Propose candidate</button>
-          <button type="button" class="ghost" id="enrich-refresh">Refresh list</button>
+          <button type="button" class="primary" id="enrich-propose">Research</button>
+          <button type="button" class="ghost" id="enrich-refresh">Clear</button>
         </div>
         <div id="candidate-list" class="candidate-list"></div>
         <div id="candidate-detail" class="candidate-detail"></div>

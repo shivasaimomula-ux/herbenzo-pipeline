@@ -20,42 +20,43 @@ from herbenzo.cli import main
 from herbenzo.components.modernizer.modernizer import ModernizerEngine
 from herbenzo.services.classical_marker_gap import matched_classical_forms
 from herbenzo.services.evidence import EvidenceStore
-from herbenzo.services.registries import (
+from herbenzo.services.records import (
     IngredientRecord,
     MarkerRecord,
-    StaticRegistriesClient,
-    UnknownIngredient,
+    ResearchError,
+    SnapshotLookup,
     UnknownMarker,
 )
+from tests.legacy_snapshot import envelope, legacy_lookup
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class MarkerGapRegistries(StaticRegistriesClient):
-    """Stock registry plus two fixtures that are not botanical monographs."""
+class MarkerGapRegistries(SnapshotLookup):
+    """Fixture snapshot plus two rows that are not botanical monographs."""
 
-    def lookup_ingredient(self, ingredient_id: str) -> IngredientRecord:
-        if ingredient_id == "HB-NOMARK":
-            return IngredientRecord(
-                "HB-NOMARK",
-                "Fixture unmarked ingredient",
-                "Fixture",
-                None,
-                (),
-                "prepared",
-                markers=(),
-            )
-        if ingredient_id == "HB-NODESC":
-            return IngredientRecord(
-                "HB-NODESC",
-                "Fixture named marker",
-                "Fixture",
-                None,
-                (),
-                "prepared",
-                markers=(MarkerRecord("Not A Real Compound", "fixture; no descriptor cache"),),
-            )
-        return super().lookup_ingredient(ingredient_id)
+    def __init__(self) -> None:
+        base = legacy_lookup()
+        records = dict(base._records)
+        records["HB-NOMARK"] = IngredientRecord(
+            "HB-NOMARK",
+            "Fixture unmarked ingredient",
+            "Fixture",
+            None,
+            (),
+            "prepared",
+            markers=(),
+        )
+        records["HB-NODESC"] = IngredientRecord(
+            "HB-NODESC",
+            "Fixture named marker",
+            "Fixture",
+            None,
+            (),
+            "prepared",
+            markers=(MarkerRecord("Not A Real Compound", "fixture; no descriptor cache"),),
+        )
+        super().__init__(records, dict(base._props))
 
 
 class _MemEvidence(EvidenceStore):
@@ -147,7 +148,14 @@ def test_classical_missing_marker_flags_and_modernize_returns(dosage_form, produ
     engine = ModernizerEngine(MarkerGapRegistries())
     sku = engine.modernize(_spec(dosage_form=dosage_form, product_name=product_name))
     gap = engine.classical_active_marker_gap
-    assert sku is None
+    assert sku is not None
+    assert sku.sku_id == "SKU-F-CLASS-1"
+    assert sku.ingredients[0].marker_status == "pending"
+    assert sku.ingredients[0].marker.properties is None
+    assert sku.ingredients[0].marker.standardization == "unstandardized"
+    assert sku.ingredients[0].bcs.bcs_class is None
+    assert sku.ingredients[0].delivery.primary is None
+    assert "classical_active_marker_gap" not in sku.model_dump(mode="json")
     assert gap is not None
     assert gap["present"] is True
     assert gap["blocking"] is False
@@ -155,16 +163,27 @@ def test_classical_missing_marker_flags_and_modernize_returns(dosage_form, produ
     assert gap["affects_confidence_floor"] is False
     assert gap["code"] == "classical_active_marker_gap"
     assert gap["ingredients"][0]["ingredient_id"] == "HB-NOMARK"
-    assert "registry" in gap["ingredients"][0]["reason"]
+    assert "marker" in gap["ingredients"][0]["reason"]
 
 
-def test_pipeline_classical_missing_marker_succeeds_without_inventing_sku(tmp_path):
+def test_pipeline_classical_missing_marker_returns_sku_with_pending_flag(tmp_path):
     report = _pipeline().run(_spec())
     gap = report["classical_active_marker_gap"]
     assert gap["present"] is True
     assert gap["blocking"] is False
-    assert report["sku"] is None
-    assert report["claims"] == []
+    assert gap["release"] == "requires marker before release"
+    sku = report["sku"]
+    assert sku["sku_id"] == "SKU-F-CLASS-1"
+    ingredient = sku["ingredients"][0]
+    assert ingredient["ingredient_id"] == "HB-NOMARK"
+    assert ingredient["marker_status"] == "pending"
+    assert ingredient["marker"]["properties"] is None
+    assert ingredient["marker"]["marker_name"] is None
+    assert ingredient["bcs"]["evidence_basis"] == "unstandardized"
+    assert ingredient["delivery"]["primary"] is None
+    assert "marker_pending: Fixture unmarked ingredient" in report["warnings"]
+    assert report["claims"][0]["reason_code"] == "marker_pending"
+    assert "requires a marker before release" in report["claims"][0]["claim"]
     assert report["confidence"]["after_modernization"] == report["confidence"]["inherited_from_A"]
     assert report["confidence"]["after_adjudication"] == report["confidence"]["inherited_from_A"]
     assert report["manifest"]["offline"] is True
@@ -172,21 +191,16 @@ def test_pipeline_classical_missing_marker_succeeds_without_inventing_sku(tmp_pa
 
 def test_api_classical_missing_marker_is_200_not_422():
     client = TestClient(app)
-    engine = ModernizerEngine(MarkerGapRegistries())
-    app_engine = "herbenzo.api._ENGINE"
-    import herbenzo.api as api_mod
-
-    previous = api_mod._ENGINE
-    api_mod._ENGINE = engine
-    try:
-        response = client.post("/modernize", json=_spec())
-    finally:
-        api_mod._ENGINE = previous
+    response = client.post("/modernize", json=envelope(_spec(), MarkerGapRegistries()))
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["sku"] is None
+    assert body["sku_id"] == "SKU-F-CLASS-1"
+    assert body["ingredients"][0]["marker_status"] == "pending"
+    assert body["ingredients"][0]["marker"]["properties"] is None
+    assert "marker_pending: Fixture unmarked ingredient" in body["warnings"]
     assert body["classical_active_marker_gap"]["blocking"] is False
     assert body["classical_active_marker_gap"]["advisory_only"] is True
+    assert body["classical_active_marker_gap"]["release"] == "requires marker before release"
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +225,7 @@ def test_modern_registry_ingredient_has_no_flag():
 def test_classical_name_with_registry_markers_has_no_flag():
     """Triphala Churna is a classical form, but each fruit has a registry marker."""
     raw = json.loads((ROOT / "examples" / "triphala.json").read_text())
-    engine = ModernizerEngine()
+    engine = ModernizerEngine(legacy_lookup())
     sku = engine.modernize(raw)
     assert sku is not None
     assert engine.classical_active_marker_gap is None
@@ -226,7 +240,7 @@ def test_pipeline_and_cli_leave_marker_backed_classical_unflagged(tmp_path, monk
     report = Pipeline(
         allow_network=False,
         evidence=_MemEvidence(),
-        registries=StaticRegistriesClient(),
+        lookup=legacy_lookup(),
     ).run(raw)
     assert report["classical_active_marker_gap"] is None
     assert report["sku"]["product_name"] == "Triphala Churna"
@@ -235,7 +249,10 @@ def test_pipeline_and_cli_leave_marker_backed_classical_unflagged(tmp_path, monk
 
     monkeypatch.chdir(tmp_path)
     out = tmp_path / "report.json"
-    assert main(["run", str(ROOT / "examples" / "triphala.json"), "-o", str(out), "--offline"]) == 0
+    raw = json.loads((ROOT / "examples" / "triphala.json").read_text())
+    payload = tmp_path / "triphala-envelope.json"
+    payload.write_text(json.dumps(envelope(raw)))
+    assert main(["run", str(payload), "-o", str(out), "--offline"]) == 0
     cli_report = json.loads(out.read_text())
     assert cli_report["classical_active_marker_gap"] is None
     assert cli_report["sku"]["sku_id"] == "SKU-F-TRIP-001"
@@ -244,7 +261,7 @@ def test_pipeline_and_cli_leave_marker_backed_classical_unflagged(tmp_path, monk
 def test_api_ashwagandha_omits_the_indicator():
     client = TestClient(app)
     raw = json.loads((ROOT / "examples" / "ashwagandha.json").read_text())
-    response = client.post("/modernize", json=raw)
+    response = client.post("/modernize", json=envelope(raw))
     assert response.status_code == 200, response.text
     assert "classical_active_marker_gap" not in response.json()
 
@@ -277,8 +294,12 @@ def test_flag_does_not_block_or_penalize_remaining_ingredients():
     assert [i["ingredient_id"] for i in mixed["classical_active_marker_gap"]["ingredients"]] == [
         "HB-NOMARK"
     ]
-    assert [i["ingredient_id"] for i in mixed["sku"]["ingredients"]] == ["HB-TURM"]
+    assert [i["ingredient_id"] for i in mixed["sku"]["ingredients"]] == ["HB-TURM", "HB-NOMARK"]
     assert mixed["sku"]["ingredients"][0]["marker"]["marker_name"] == "Curcumin"
+    pending = mixed["sku"]["ingredients"][1]
+    assert pending["marker_status"] == "pending"
+    assert pending["marker"]["properties"] is None
+    assert "marker_pending: Fixture unmarked ingredient" in mixed["warnings"]
     assert "classical_active_marker_gap" not in mixed["sku"]
 
     assert mixed["confidence"]["after_modernization"] == control["confidence"]["after_modernization"]
@@ -286,15 +307,14 @@ def test_flag_does_not_block_or_penalize_remaining_ingredients():
     assert mixed["confidence"]["after_adjudication"] <= mixed["confidence"]["inherited_from_A"]
     assert mixed["claims"]
     assert {c["verdict"] for c in mixed["claims"]} <= {"computed", "unsupported"}
-    assert len(mixed["claims"]) == len(control["claims"])
+    release = [c for c in mixed["claims"] if c["reason_code"] == "marker_pending"]
+    assert len(release) == 1
+    assert "requires a marker before release" in release[0]["claim"]
+    assert len(mixed["claims"]) == len(control["claims"]) + 1
 
 
 def test_api_mixed_classical_gap_returns_sku_and_indicator():
-    import herbenzo.api as api_mod
-
     client = TestClient(app)
-    previous = api_mod._ENGINE
-    api_mod._ENGINE = ModernizerEngine(MarkerGapRegistries())
     raw = _spec(ingredients=[_turmeric(), _spec()["ingredients"][0]])
     raw["source_spec_id"] = "spec-gap-1"
     raw["provenance_thread"] = {
@@ -303,15 +323,15 @@ def test_api_mixed_classical_gap_returns_sku_and_indicator():
         "formulation_id": raw["formulation_id"],
         "stages": ["A"],
     }
-    try:
-        response = client.post("/modernize", json=raw)
-    finally:
-        api_mod._ENGINE = previous
+    response = client.post("/modernize", json=envelope(raw, MarkerGapRegistries()))
 
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["sku_id"] == "SKU-F-CLASS-1"
-    assert [i["ingredient_id"] for i in body["ingredients"]] == ["HB-TURM"]
+    assert [i["ingredient_id"] for i in body["ingredients"]] == ["HB-TURM", "HB-NOMARK"]
+    assert body["ingredients"][0]["marker"]["marker_name"] == "Curcumin"
+    assert body["ingredients"][1]["marker_status"] == "pending"
+    assert "marker_pending: Fixture unmarked ingredient" in body["warnings"]
     assert body["classical_active_marker_gap"]["blocking"] is False
     assert body["confidence"] <= raw["confidence"]
     assert body["inherited_confidence"] == raw["confidence"]
@@ -321,38 +341,46 @@ def test_api_mixed_classical_gap_returns_sku_and_indicator():
     assert "B" in thread["stages"]
 
 
-def test_non_classical_missing_marker_still_raises():
+def test_non_classical_missing_marker_is_a_gap_not_an_error():
     engine = ModernizerEngine(MarkerGapRegistries())
-    with pytest.raises(UnknownMarker):
-        engine.modernize(
-            _spec(
-                product_name="Unmarked capsule",
-                dosage_form="capsule",
-            )
+    sku = engine.modernize(
+        _spec(
+            product_name="Unmarked capsule",
+            dosage_form="capsule",
         )
-    assert engine.classical_active_marker_gap is None
+    )
+    assert sku is not None
+    assert sku.ingredients[0].marker_status == "pending"
+    assert sku.ingredients[0].marker.properties is None
+    assert engine.classical_active_marker_gap is not None
+    assert engine.classical_active_marker_gap["blocking"] is False
 
 
-def test_pipeline_non_classical_missing_marker_still_raises():
-    with pytest.raises(UnknownMarker):
-        _pipeline().run(_spec(product_name="Unmarked capsule", dosage_form="capsule"))
+def test_pipeline_non_classical_missing_marker_does_not_raise():
+    report = _pipeline().run(_spec(product_name="Unmarked capsule", dosage_form="capsule"))
+    assert report["sku"]["sku_id"] == "SKU-F-CLASS-1"
+    assert report["sku"]["ingredients"][0]["marker_status"] == "pending"
+    assert "marker_pending: Fixture unmarked ingredient" in report["warnings"]
+    assert report["classical_active_marker_gap"]["blocking"] is False
 
 
-def test_api_non_classical_missing_marker_is_422():
-    import herbenzo.api as api_mod
-
+def test_api_non_classical_missing_marker_is_200():
     client = TestClient(app)
-    previous = api_mod._ENGINE
-    api_mod._ENGINE = ModernizerEngine(MarkerGapRegistries())
-    try:
-        response = client.post(
-            "/modernize",
-            json=_spec(product_name="Unmarked capsule", dosage_form="capsule"),
-        )
-    finally:
-        api_mod._ENGINE = previous
-    assert response.status_code == 422
-    assert response.json()["detail"]["error"] == "unknown_ingredient"
+    response = client.post(
+        "/modernize",
+        json=envelope(
+            _spec(product_name="Unmarked capsule", dosage_form="capsule"),
+            MarkerGapRegistries(),
+        ),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["sku_id"] == "SKU-F-CLASS-1"
+    assert body["ingredients"][0]["marker_status"] == "pending"
+    assert body["ingredients"][0]["marker"]["properties"] is None
+    assert "marker_pending: Fixture unmarked ingredient" in body["warnings"]
+    assert body["classical_active_marker_gap"]["blocking"] is False
+    assert "research_provenance" in body
 
 
 def test_unknown_identity_still_raises_for_a_classical_form():
@@ -365,8 +393,9 @@ def test_unknown_identity_still_raises_for_a_classical_form():
             "quantity_mg": 100.0,
         }
     ]
-    with pytest.raises(UnknownIngredient):
+    with pytest.raises(ResearchError) as raised:
         engine.modernize(spec)
+    assert raised.value.code == "not_approved"
 
 
 def test_named_marker_without_descriptors_still_raises_for_classical_forms():

@@ -17,18 +17,19 @@ from herbenzo.schemas.contracts import (
     ModernizedSKU,
     PhysicochemicalProfile,
 )
-from herbenzo.services.registries import (
-    StaticRegistriesClient,
-    UnknownIngredient,
+from herbenzo.services.records import (
+    MarkerRecord,
+    ResearchError,
     marker_dose_mg,
     normalize_extract_ratio,
     reconcile_percentages,
 )
+from tests.legacy_snapshot import legacy_lookup
 
 
 @pytest.fixture(scope="module")
 def engine() -> ModernizerEngine:
-    return ModernizerEngine()
+    return ModernizerEngine(legacy_lookup())
 
 
 def _spec(ingredient_id: str, botanical: str, **kw) -> dict:
@@ -98,8 +99,9 @@ class TestContractValidation:
 
     def test_unknown_ingredient_raises_rather_than_guessing(self, engine):
         spec = _spec("HB-NOPE", "Nonexistentia fictiva")
-        with pytest.raises(UnknownIngredient):
+        with pytest.raises(ResearchError) as raised:
             engine.modernize(spec)
+        assert raised.value.code == "not_approved"
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +234,7 @@ class TestGoldenCases:
 
     def test_berberine_without_override_would_be_class_ii(self, engine):
         """Guards the override: it must be the thing doing the work, not a coincidence."""
-        client = StaticRegistriesClient()
+        client = legacy_lookup()
         props = client.get_physicochemical_properties("Berberine")
         assert classify(props, marker=None).bcs_class is BCSClass.II
 
@@ -292,7 +294,7 @@ _ALL_IDS = [
 
 @pytest.mark.parametrize("ingredient_id", _ALL_IDS)
 def test_every_registry_ingredient_modernizes(engine, ingredient_id):
-    client = StaticRegistriesClient()
+    client = legacy_lookup()
     rec = client.lookup_ingredient(ingredient_id)
     sku = engine.modernize(_spec(ingredient_id, rec.botanical_name))
     ing = sku.ingredients[0]
@@ -341,24 +343,12 @@ class TestNormalization:
 # Identity resolution
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize(
-    "name,expected",
-    [
-        ("Withania somnifera", "HB-ASHW"),
-        ("ashwagandha", "HB-ASHW"),
-        ("Indian ginseng", "HB-ASHW"),
-        ("Emblica officinalis", "HB-AMLA"),   # legacy synonym
-        ("Cinnamomum zeylanicum", "HB-CINN"),  # legacy synonym
-        ("Pippali", "HB-PIPL"),
-    ],
-)
-def test_synonym_resolution(name, expected):
-    assert StaticRegistriesClient().resolve_identity(name) == expected
-
-
-def test_unresolvable_synonym_raises():
-    with pytest.raises(UnknownIngredient):
-        StaticRegistriesClient().resolve_identity("definitely not a plant")
+def test_stock_ids_are_fixture_only():
+    """Identity is resolved by NCBI during research, not by a synonym index."""
+    lookup = legacy_lookup()
+    assert lookup.lookup_ingredient("HB-ASHW").botanical_name == "Withania somnifera"
+    with pytest.raises(ResearchError):
+        lookup.lookup_ingredient("definitely not a plant")
 
 
 # ---------------------------------------------------------------------------
@@ -385,7 +375,7 @@ def test_formulation_spec_json_schema_is_exportable():
 from dataclasses import replace  # noqa: E402
 
 from herbenzo.components.modernizer.delivery_recommender import recommend  # noqa: E402
-from herbenzo.services.registries import MarkerRecord  # noqa: E402
+from herbenzo.services.records import MarkerRecord  # noqa: E402
 
 
 def _props(**kw) -> PhysicochemicalProfile:
@@ -474,7 +464,7 @@ def test_engine_accepts_validated_spec_instance(engine):
 
 def test_registry_marker_records_are_immutable():
     """Curated flags must not be mutable at runtime by a caller."""
-    marker = StaticRegistriesClient().lookup_marker("HB-BERB")
+    marker = legacy_lookup().lookup_marker("HB-BERB")
     with pytest.raises(Exception):
         marker.efflux_substrate = False  # type: ignore[misc]
     assert replace(marker, efflux_substrate=False).efflux_substrate is False

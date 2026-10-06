@@ -264,6 +264,21 @@ button:active,
   font-size: 1.05rem;
 }
 
+.marker-flag {
+  display: inline-block;
+  margin-left: 0.55rem;
+  padding: 0.12rem 0.5rem;
+  border-radius: 999px;
+  background: var(--warn-bg);
+  color: var(--warn-ink);
+  font-family: var(--font-body);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
 .ingredient .sub {
   margin: 0 0 0.75rem;
   color: var(--ink-soft);
@@ -537,6 +552,7 @@ button:active,
   padding: 0.4rem 0.5rem;
   font: inherit;
   cursor: pointer;
+  white-space: normal;
 }
 
 .suggest button:hover,
@@ -587,6 +603,16 @@ button:active,
 .candidate-card p {
   margin: 0.2rem 0;
   font-size: 0.86rem;
+}
+
+.taxonomy-block ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.86rem;
+}
+
+.taxonomy-block li {
+  margin: 0.25rem 0;
 }
 
 .raw-actions {

@@ -2,7 +2,7 @@
 
 This step does not block. A missing cache, a parse failure, no hit, or several
 hits never raises and never blocks candidate approval. A single match may be
-copied onto the approved overlay row with source and citation.
+copied onto the approval document with source and citation.
 
 Column names were checked on 6 October 2026 from the first rows of the batch
 files at ``https://cb.imsc.res.in/imppat/images/Batch_Download/`` (the download
@@ -211,7 +211,7 @@ def _blank_result(status: str, error: str | None, *, files: list[dict[str, str]]
 
 
 def approved_context(block: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Fields safe to copy onto an approved overlay row.
+    """Fields safe to copy onto an approval document.
 
     Only a single unambiguous match is copied. ``no_match``, ``ambiguous``,
     and ``unavailable`` return ``None`` so approval does not invent names.

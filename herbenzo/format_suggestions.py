@@ -35,7 +35,7 @@ from urllib.parse import quote
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from herbenzo.components.modernizer.bcs_classifier import classify
-from herbenzo.services.registries import StaticRegistriesClient
+from herbenzo.services.records import SnapshotLookup
 
 __all__ = [
     "AUDIENCES",
@@ -119,24 +119,24 @@ _LNHPD_NOTE = (
     "or dosage form."
 )
 
-#: Verified EMA HMPC herbal monographs. Other registry herbs have none.
+#: Verified EMA HMPC herbal monographs, keyed by botanical name.
 _HMPC_MONOGRAPHS: dict[str, dict[str, str]] = {
-    "HB-ASHW": {
+    "withania somnifera": {
         "brand": "EMA HMPC",
         "category": "herbal monograph",
         "url": "https://www.ema.europa.eu/en/medicines/herbal/withaniae-somniferae-radix",
         "note": (
             "Withaniae somniferae radix. Covers accepted preparations and "
-            "pharmaceutical forms. Attached because this suggestion includes HB-ASHW."
+            "pharmaceutical forms. Attached because this suggestion includes Withania somnifera."
         ),
     },
-    "HB-TURM": {
+    "curcuma longa": {
         "brand": "EMA HMPC",
         "category": "herbal monograph",
         "url": "https://www.ema.europa.eu/en/medicines/herbal/curcumae-longae-rhizoma",
         "note": (
             "Curcumae longae rhizoma. Covers accepted preparations and "
-            "pharmaceutical forms. Attached because this suggestion includes HB-TURM."
+            "pharmaceutical forms. Attached because this suggestion includes Curcuma longa."
         ),
     },
 }
@@ -349,15 +349,28 @@ def profile_from_registry(
     quantity_mg: float | None,
     registries: Any,
 ) -> IngredientProfile:
-    """Resolve one registry id. Unknown ids raise ``UnknownIngredient``."""
+    """Resolve one approved ingredient. Missing approvals raise ``ResearchError``."""
     record = registries.lookup_ingredient(ingredient_id)
+    traits = _traits().get(ingredient_id) or _traits().get(getattr(record, "botanical_name", "")) or {}
+    tastes = tuple(str(item) for item in traits.get("tastes") or () if item)
+    if not getattr(record, "markers", ()):
+        return IngredientProfile(
+            ingredient_id=ingredient_id,
+            quantity_mg=quantity_mg,
+            bcs_class="unknown",
+            solubility="unknown",
+            permeability="unknown",
+            tastes=tastes,
+            heat_sensitive=bool(traits.get("heat_sensitive")),
+            volatile=bool(traits.get("volatile")),
+            common_name=str(getattr(record, "common_name", "") or ""),
+            botanical_name=str(getattr(record, "botanical_name", "") or ""),
+        )
     marker = registries.lookup_marker(ingredient_id)
     props = registries.get_physicochemical_properties(marker.marker_name)
     assessment = classify(props, marker)
     bcs = assessment.bcs_class
     bcs_value = bcs.value if hasattr(bcs, "value") else str(bcs)
-    traits = _traits().get(ingredient_id) or {}
-    tastes = tuple(str(item) for item in traits.get("tastes") or () if item)
     return IngredientProfile(
         ingredient_id=ingredient_id,
         quantity_mg=quantity_mg,
@@ -463,7 +476,7 @@ def _suggestion_references(
     rows = [ref.as_public() for ref in fmt.references]
     seen = {row["url"] for row in rows}
     for profile in profiles:
-        monograph = _HMPC_MONOGRAPHS.get(profile.ingredient_id)
+        monograph = _HMPC_MONOGRAPHS.get(profile.botanical_name.casefold())
         if monograph and monograph["url"] not in seen:
             rows.append(dict(monograph))
             seen.add(monograph["url"])
@@ -499,13 +512,14 @@ def _score_one(
         reasons.append(f"Fits a {len(profiles)}-ingredient blend.")
 
     low_sol = [p.ingredient_id for p in profiles if p.solubility == "low"]
+    high_only = bool(profiles) and all(p.solubility == "high" for p in profiles)
     if low_sol and fmt.helps_low_solubility:
         score += _LOW_SOL_HELP
         reasons.append(
             "At least one marker looks low-solubility; this format is tagged as a "
             "dispersion or dissolution aid."
         )
-    elif profiles and not low_sol and fmt.helps_low_solubility:
+    elif high_only and fmt.helps_low_solubility:
         score += _LOW_SOL_UNNECESSARY
         reasons.append(
             "Markers look high-solubility, so a solubilizing carrier is not the first need."
@@ -634,17 +648,16 @@ def suggest_formats(
     quantities_mg: dict[str, float] | None = None,
     registries: Any | None = None,
 ) -> dict[str, Any]:
-    """Rank formats for registry ingredient ids.
+    """Rank formats for approved ingredient ids on this request.
 
-    ``registries.lookup_ingredient`` raises ``UnknownIngredient`` for an id
-    that is not in the stock registry. That is the caller's signal to return
-    422.
+    ``registries.lookup_ingredient`` raises ``ResearchError`` (``not_approved``)
+    when the id is not on the approval snapshot.
     """
     if not ingredient_ids:
         raise ValueError("ingredient_ids must be a non-empty list")
     if len(ingredient_ids) != len(set(ingredient_ids)):
         raise ValueError("duplicate ingredient_id")
-    client = registries if registries is not None else StaticRegistriesClient()
+    client = registries if registries is not None else SnapshotLookup()
     quantities = quantities_mg or {}
     profiles = [
         profile_from_registry(ingredient_id, quantities.get(ingredient_id), client)
@@ -750,6 +763,10 @@ def suggest_from_payload(payload: dict[str, Any], registries: Any | None = None)
     """Validate a ``POST /suggest-formats`` body and rank formats."""
     if not isinstance(payload, dict):
         raise ValueError("Request body must be a JSON object")
+    if registries is None and isinstance(payload.get("approvals"), list):
+        from herbenzo.services.records import snapshot_from_approvals
+
+        registries = snapshot_from_approvals(payload["approvals"])
     ids, quantities = _ids_and_quantities(payload)
     audience = _optional_text(payload.get("audience"), "audience")
     if audience is not None:

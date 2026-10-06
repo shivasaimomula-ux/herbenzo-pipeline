@@ -238,7 +238,7 @@ function ingredientOptions(selectedId, ing) {
     })
     .join("");
   if (selectedId && !known.has(selectedId)) {
-    html += `<option value="${escapeHtml(selectedId)}" selected data-botanical="${escapeHtml(saved.botanical_name || "")}" data-common="${escapeHtml(saved.common_name || "")}" data-part="${escapeHtml(saved.part_used || "")}">${escapeHtml(selectedId)} (not in registry)</option>`;
+    html += `<option value="${escapeHtml(selectedId)}" selected data-botanical="${escapeHtml(saved.botanical_name || "")}" data-common="${escapeHtml(saved.common_name || "")}" data-part="${escapeHtml(saved.part_used || "")}">${escapeHtml(selectedId)} (not approved in this session)</option>`;
   }
   return html;
 }
@@ -274,7 +274,7 @@ function cardHtml(ing) {
         <button type="button" class="ghost remove-ing">Remove</button>
       </div>
       <label class="field">
-        Registry ingredient
+        Approved ingredient
         <select class="ing-id">${ingredientOptions(row.ingredient_id || "", row)}</select>
       </label>
       <p class="identity"><span class="botanical">${escapeHtml(botanical || "—")}</span> · <span class="common">${escapeHtml(common || "—")}</span> · <span class="part">${escapeHtml(part || "—")}</span></p>
@@ -407,26 +407,59 @@ function filteredRegistry(query) {
 
 function renderSuggestions() {
   if (!el.ingredientSuggest || !el.ingredientSearch) return;
-  const matches = filteredRegistry(el.ingredientSearch.value);
-  if (!el.ingredientSearch.value.trim() || !matches.length) {
+  const query = el.ingredientSearch.value.trim();
+  const status = document.getElementById("ingredient-suggest-status");
+  window.clearTimeout(suggestTimer);
+  if (query.length < 2) {
     el.ingredientSuggest.hidden = true;
     el.ingredientSuggest.innerHTML = "";
+    if (status) status.textContent = "";
     return;
   }
-  el.ingredientSuggest.hidden = false;
-  el.ingredientSuggest.innerHTML = matches
-    .map((row) => {
-      const label = `${row.common_name || row.botanical_name} — ${row.botanical_name} (${row.ingredient_id})`;
-      return `<li><button type="button" data-add-id="${escapeHtml(row.ingredient_id)}">${escapeHtml(label)}</button></li>`;
-    })
-    .join("");
+  if (status) status.textContent = "Searching NCBI, GBIF, and Wikidata…";
+  const serial = ++suggestSerial;
+  suggestTimer = window.setTimeout(async () => {
+    try {
+      const res = await fetch(`/research/suggest?q=${encodeURIComponent(query)}`, {
+        headers: { accept: "application/json" },
+      });
+      const body = await res.json().catch(() => ({ suggestions: [] }));
+      if (serial !== suggestSerial) return;
+      const rows = Array.isArray(body.suggestions) ? body.suggestions : [];
+      if (!rows.length) {
+        el.ingredientSuggest.hidden = true;
+        el.ingredientSuggest.innerHTML = "";
+        if (status) {
+          const notes = Array.isArray(body.source_notes) ? body.source_notes.filter(Boolean) : [];
+          const lead = body.error ? "No suggestions (taxonomy lookup failed)." : "No matching species.";
+          status.textContent = [lead, ...notes].join(" ");
+        }
+        return;
+      }
+      el.ingredientSuggest.hidden = false;
+      el.ingredientSuggest.innerHTML = rows
+        .map((row) => {
+          const commons = (row.common_names || []).concat(row.synonyms || []).join(", ");
+          const sources = Array.isArray(row.sources) && row.sources.length ? row.sources.join(", ") : "NCBI Taxonomy";
+          const label = `${row.scientific_name} · ${row.rank || "rank unknown"} · tax ${row.tax_id} · ${sources}${commons ? " · " + commons : ""}`;
+          const sourceAttr = (Array.isArray(row.sources) ? row.sources : []).join("|");
+          return `<li><button type="button" data-scientific-name="${escapeHtml(row.scientific_name)}" data-tax-id="${escapeHtml(row.tax_id)}" data-sources="${escapeHtml(sourceAttr)}">${escapeHtml(label)}</button></li>`;
+        })
+        .join("");
+      if (status) status.textContent = suggestionStatus(body, rows);
+    } catch (err) {
+      if (serial !== suggestSerial) return;
+      el.ingredientSuggest.hidden = true;
+      if (status) status.textContent = "No suggestions (taxonomy lookup failed).";
+    }
+  }, 300);
 }
 
 function renderChips() {
   if (!el.ingredientChips) return;
   const rows = readIngredients().filter((ing) => ing.ingredient_id);
   if (!rows.length) {
-    el.ingredientChips.innerHTML = `<p class="draft-empty">No herbs selected yet. Search the registry to add several.</p>`;
+    el.ingredientChips.innerHTML = `<p class="draft-empty">No herbs selected yet. Type a name, research it, then approve.</p>`;
     return;
   }
   el.ingredientChips.innerHTML = rows
@@ -494,7 +527,7 @@ function specProblems(spec) {
   const ids = [];
   (spec.ingredients || []).forEach((ing, index) => {
     const n = index + 1;
-    if (!ing.ingredient_id) problems.push(`Ingredient ${n}: choose a registry ingredient.`);
+    if (!ing.ingredient_id) problems.push(`Ingredient ${n}: research and approve a species first.`);
     if (!ing.botanical_name) problems.push(`Ingredient ${n}: botanical name is missing.`);
     if (typeof ing.quantity_mg !== "number" || !(ing.quantity_mg > 0)) {
       problems.push(`Ingredient ${n}: amount (mg per serving) must be greater than 0.`);
@@ -564,6 +597,25 @@ function formatWhen(iso) {
 }
 
 let lastDrafts = [];
+const approvedById = new Map();
+window.herbenzoApproved = approvedById;
+let suggestTimer = 0;
+let suggestSerial = 0;
+let pickedName = "";
+let pickedQuery = "";
+let pickedSources = [];
+
+function suggestionStatus(body, rows) {
+  const notes = Array.isArray(body.source_notes) ? body.source_notes.filter(Boolean) : [];
+  let lead = "";
+  if (rows.length > 1) {
+    lead = "Several taxa match. Pick a scientific name and tax id. Nothing is selected for you.";
+  } else if (body.ambiguous) {
+    lead = "This name is not the scientific name. Pick the row. Nothing is selected for you.";
+  }
+  return [lead, ...notes].filter(Boolean).join(" ");
+}
+let lastCandidate = null;
 
 function renderDraftList(drafts) {
   lastDrafts = Array.isArray(drafts) ? drafts : [];
@@ -604,18 +656,105 @@ async function loadDraftList() {
 }
 
 async function loadIngredients() {
-  const res = await fetch("/ingredients", { headers: { accept: "application/json" } });
+  registry = [...registryById.values()];
+}
+
+function rememberApproval(approval) {
+  const ingredient = approval.ingredient || {};
+  const id = ingredient.ingredient_id || approval.ingredient_id;
+  if (!id) return;
+  approvedById.set(id, approval);
+  const row = {
+    ingredient_id: id,
+    botanical_name: ingredient.botanical_name,
+    common_name: ingredient.common_name,
+    sanskrit_name: ingredient.sanskrit_name,
+    synonyms: ingredient.synonyms || [],
+    part_used: ingredient.part_used,
+    markers: ingredient.markers || [],
+  };
+  registryById.set(id, row);
+  registry = [...registryById.values()];
+}
+
+function selectedTaxonMatches(query) {
+  if (!el.ingredientSuggest || el.ingredientSuggest.hidden) return true;
+  const buttons = [...el.ingredientSuggest.querySelectorAll("[data-scientific-name]")];
+  if (!buttons.length) return true;
+  const typed = query.trim().toLowerCase();
+  const exact = buttons.filter((button) => (button.dataset.scientificName || "").toLowerCase() === typed);
+  return exact.length === 1;
+}
+
+async function researchCurrentName() {
+  const query = el.ingredientSearch.value.trim();
+  if (!query) {
+    setStatus("error", "Type a species or common name first.");
+    return;
+  }
+  if (!selectedTaxonMatches(query)) {
+    setStatus(
+      "error",
+      "This name matches more than one taxon, or it is not the scientific name. Pick a row in the list. Nothing is selected for you."
+    );
+    return;
+  }
+  setStatus(null, "Researching…");
+  const payload = { query };
+  if (pickedName && query.toLowerCase() === pickedName.toLowerCase() && pickedSources.length) {
+    payload.name_sources = pickedSources;
+    payload.name_query = pickedQuery;
+  }
+  const res = await fetch("/research", {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify(payload),
+  });
   const body = await res.json().catch(() => null);
   if (!res.ok) {
-    throw new Error(formatErrorDetail(body && body.detail !== undefined ? body.detail : body));
+    setStatus("error", `Research failed (${res.status})\n${formatErrorDetail(body && body.detail)}`);
+    return;
   }
-  registry = Array.isArray(body && body.ingredients) ? body.ingredients : [];
-  registryById.clear();
-  for (const row of registry) registryById.set(row.ingredient_id, row);
-  const existing = el.ingredientEditors.querySelector(".ing-editor")
-    ? readIngredients()
-    : [blankIngredient()];
-  renderEditors(existing.length ? existing : [blankIngredient()]);
+  lastCandidate = body;
+  const evidence = document.getElementById("research-evidence");
+  const articles = (body.literature && body.literature.articles) || [];
+  const marker = body.marker_status || "pending";
+  if (evidence) {
+    evidence.textContent = [
+      `${body.taxonomy && body.taxonomy.scientific_name} (${body.taxonomy && body.taxonomy.rank}, tax ${body.taxonomy && body.taxonomy.tax_id})`,
+      `PubMed refs: ${articles.length}. Marker: ${marker}.`,
+      articles.slice(0, 3).map((article) => `PMID ${article.pmid}`).join(", "),
+    ].filter(Boolean).join(" ");
+  }
+  setStatus("ok", "Research finished. Approve to hold it on this formulation.");
+}
+
+async function approveLastCandidate() {
+  if (!lastCandidate) {
+    setStatus("error", "Research an ingredient before approving it.");
+    return;
+  }
+  const res = await fetch("/research/approve", {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ candidate: lastCandidate }),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    setStatus("error", `Approval failed (${res.status})\n${formatErrorDetail(body && body.detail)}`);
+    return;
+  }
+  rememberApproval(body);
+  const id = body.ingredient_id;
+  const ingredient = body.ingredient || {};
+  const name = ingredient.botanical_name || id;
+  addRegistryIngredient(id);
+  const evidence = document.getElementById("research-evidence");
+  if (evidence) {
+    const marker = body.marker_status || "pending";
+    evidence.textContent = `Approved ${name} (${id}) for this formulation. Marker: ${marker}. Run Modernize sends this approval with the spec.`;
+  }
+  setStatus("ok", `Approved ${name} (${id}) for this formulation. Run Modernize uses this approval.`);
 }
 
 function responseSku(body) {
@@ -681,7 +820,6 @@ function summarizeAdvisory(value) {
 function renderOneAdvisory(item) {
   if (item.code === "classical_active_marker_gap" && item.value && typeof item.value === "object") {
     const gap = item.value;
-    const forms = Array.isArray(gap.matched_forms) ? gap.matched_forms.join(", ") : "";
     const lines = (Array.isArray(gap.ingredients) ? gap.ingredients : [])
       .map(
         (row) =>
@@ -690,9 +828,9 @@ function renderOneAdvisory(item) {
       .join("");
     return `
       <div class="advisory-item">
-        <strong>Advisory · classical preparation has no established active marker</strong>
-        <p>${escapeHtml(gap.message || "classical_active_marker_gap")}</p>
-        <p>Matched form: ${escapeHtml(forms || "—")}. This does not block modernization.</p>
+        <strong>Marker pending — this ingredient stays on the SKU, unstandardized</strong>
+        <p>${escapeHtml(gap.message || "marker pending")}</p>
+        <p>Release requires a marker. QC, specification, and label fields that need a marker stay pending. POST /research/marker with this approval and a specific marker_name, then modernize again. This does not block the SKU.</p>
         ${lines ? `<ul>${lines}</ul>` : ""}
       </div>`;
   }
@@ -758,6 +896,10 @@ function renderSku(sku, rawBody) {
         .join(" → "),
     ]);
   }
+  const warnings = rawBody && Array.isArray(rawBody.warnings) ? rawBody.warnings.filter(Boolean) : [];
+  if (warnings.length) {
+    summaryRows.push(["Warnings", warnings.join("; ")]);
+  }
   el.skuSummary.innerHTML = summaryRows
     .map(
       ([k, v]) =>
@@ -771,18 +913,29 @@ function renderSku(sku, rawBody) {
       const marker = ing.marker || {};
       const bcs = ing.bcs || {};
       const delivery = ing.delivery || {};
-      const markerName = marker.marker_name || "—";
-      const proxy = marker.is_proxy ? " (proxy)" : "";
-      const bcsClass = bcs.bcs_class != null ? `Class ${bcs.bcs_class}` : "—";
-      const bcsBits = [
-        bcs.solubility_call ? `solubility ${bcs.solubility_call}` : null,
-        bcs.permeability_call ? `permeability ${bcs.permeability_call}` : null,
-        bcs.evidence_basis ? `basis ${bcs.evidence_basis}` : null,
-        typeof bcs.confidence === "number" ? `conf ${pct(bcs.confidence)}` : null,
-      ]
-        .filter(Boolean)
-        .join(" · ");
-      const primary = String(delivery.primary || "—").replaceAll("_", " ");
+      const pending =
+        ing.marker_status === "pending" || marker.marker_status === "pending";
+      const markerName = pending ? "unstandardized" : marker.marker_name || "—";
+      const proxy = !pending && marker.is_proxy ? " (proxy)" : "";
+      const flag = pending ? `<span class="marker-flag">marker pending</span>` : "";
+      const bcsClass = pending
+        ? "unstandardized"
+        : bcs.bcs_class != null
+          ? `Class ${bcs.bcs_class}`
+          : "—";
+      const bcsBits = pending
+        ? "no class until a marker is set"
+        : [
+            bcs.solubility_call ? `solubility ${bcs.solubility_call}` : null,
+            bcs.permeability_call ? `permeability ${bcs.permeability_call}` : null,
+            bcs.evidence_basis ? `basis ${bcs.evidence_basis}` : null,
+            typeof bcs.confidence === "number" ? `conf ${pct(bcs.confidence)}` : null,
+          ]
+            .filter(Boolean)
+            .join(" · ");
+      const primary = pending
+        ? "unstandardized — requires a marker before release"
+        : String(delivery.primary || "—").replaceAll("_", " ");
       const alts = Array.isArray(delivery.alternatives)
         ? delivery.alternatives.map((a) => String(a).replaceAll("_", " ")).join(", ")
         : "";
@@ -791,8 +944,8 @@ function renderSku(sku, rawBody) {
 
       return `
         <article class="ingredient" style="animation-delay: ${0.05 * idx}s">
-          <h3>${escapeHtml(ing.ingredient_id || "ingredient")}</h3>
-          <p class="sub">${escapeHtml(ing.botanical_name || "")}${
+          <h3>${escapeHtml(ing.botanical_name || ing.ingredient_id || "ingredient")}${flag}</h3>
+          <p class="sub">${escapeHtml(ing.ingredient_id || "")}${
             ing.quantity_mg != null ? ` · ${escapeHtml(ing.quantity_mg)} mg` : ""
           }${
             ing.marker_dose_mg != null
@@ -847,25 +1000,23 @@ function showModernizeSuccess(body) {
   const hasAdvisory = renderAdvisoryBanner(body);
   if (!sku) {
     el.resultPanel.hidden = false;
-    el.resultMeta.textContent = hasAdvisory
-      ? "Advisory only — no ModernizedSKU in the response"
-      : "No ModernizedSKU in the response";
-    el.skuSummary.innerHTML = `<div><dt>ModernizedSKU</dt><dd>—</dd></div>`;
+    el.resultMeta.textContent = "No ModernizedSKU in the response";
+    el.skuSummary.innerHTML = `<div><dt>ModernizedSKU</dt><dd>missing</dd></div>`;
     el.ingredientCards.innerHTML = "";
     el.rawJson.textContent = JSON.stringify(body, null, 2);
-    setStatus(
-      "ok",
-      hasAdvisory
-        ? "Modernize returned an advisory and no SKU. Modernization was not reported as an error."
-        : "Modernize returned no SKU."
-    );
+    setStatus("error", "Modernize did not return a SKU.");
     el.resultPanel.scrollIntoView({ behavior: "smooth", block: "start" });
     return;
   }
-  const advisoryNote = hasAdvisory ? " · advisory" : "";
+  const warnings = Array.isArray(body && body.warnings) ? body.warnings.filter(Boolean) : [];
+  const pendingNote = warnings.length
+    ? ` · ${warnings.join("; ")}`
+    : hasAdvisory
+      ? " · marker pending"
+      : "";
   setStatus(
     "ok",
-    `Modernized · ${sku.sku_id || "SKU"} · confidence ${pct(sku.confidence)}${advisoryNote}`
+    `Modernized · ${sku.sku_id || "SKU"} · confidence ${pct(sku.confidence)}${pendingNote}`
   );
   renderSku(sku, body);
   el.resultPanel.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -927,7 +1078,10 @@ async function modernizeCompose() {
     setStatus("error", problems.join("\n"));
     return;
   }
-  await postModernize(spec, el.composeRun);
+  const approvals = readIngredients()
+    .map((ing) => approvedById.get(ing.ingredient_id))
+    .filter(Boolean);
+  await postModernize({ spec, approvals }, el.composeRun);
 }
 
 async function saveDraft() {
@@ -937,7 +1091,11 @@ async function saveDraft() {
     el.draftName.focus();
     return;
   }
-  const payload = { name, spec: buildSpec() };
+  const payload = {
+    name,
+    spec: buildSpec(),
+    approvals: [...approvedById.values()],
+  };
   if (currentDraftId) payload.id = currentDraftId;
   el.saveDraft.disabled = true;
   try {
@@ -975,6 +1133,8 @@ async function loadDraft(id) {
   }
   currentDraftId = body.id;
   el.draftName.value = body.name || "";
+  approvedById.clear();
+  for (const approval of body.approvals || []) rememberApproval(approval);
   fillCompose(body.spec || {});
   writeRawFromCompose();
   showTab("compose");
@@ -1064,25 +1224,34 @@ el.addIngredient.addEventListener("click", () => {
   if (select) select.focus();
 });
 
-el.ingredientSearch.addEventListener("input", renderSuggestions);
-el.ingredientSearch.addEventListener("focus", renderSuggestions);
+el.ingredientSearch.addEventListener("input", () => {
+  const typed = el.ingredientSearch.value.trim().toLowerCase();
+  if (!pickedName || typed !== pickedName.toLowerCase()) {
+    pickedName = "";
+    pickedQuery = "";
+    pickedSources = [];
+  }
+  renderSuggestions();
+});
 el.ingredientSearch.addEventListener("keydown", (event) => {
   if (event.key !== "Enter") return;
-  const matches = filteredRegistry(el.ingredientSearch.value);
-  if (!matches.length) return;
   event.preventDefault();
-  addRegistryIngredient(matches[0].ingredient_id);
-  el.ingredientSearch.value = "";
-  renderSuggestions();
+  researchCurrentName();
 });
 el.ingredientSuggest.addEventListener("mousedown", (event) => {
-  const button = event.target.closest("[data-add-id]");
+  const button = event.target.closest("[data-scientific-name]");
   if (!button) return;
   event.preventDefault();
-  addRegistryIngredient(button.dataset.addId);
-  el.ingredientSearch.value = "";
-  renderSuggestions();
+  pickedQuery = el.ingredientSearch.value.trim();
+  pickedName = button.dataset.scientificName || "";
+  pickedSources = (button.dataset.sources || "").split("|").map((item) => item.trim()).filter(Boolean);
+  el.ingredientSearch.value = pickedName;
+  el.ingredientSuggest.hidden = true;
+  const status = document.getElementById("ingredient-suggest-status");
+  if (status) status.textContent = "Suggestion selected. Research still has to pass identity and evidence.";
 });
+document.getElementById("ingredient-research").addEventListener("click", researchCurrentName);
+document.getElementById("ingredient-approve").addEventListener("click", approveLastCandidate);
 el.ingredientChips.addEventListener("click", (event) => {
   const chip = event.target.closest("[data-chip]");
   if (!chip) return;
@@ -1090,22 +1259,21 @@ el.ingredientChips.addEventListener("click", (event) => {
 });
 
 el.loadTriphala.addEventListener("click", () => {
-  currentDraftId = null;
-  fillCompose(TRIPHALA_SPEC);
-  writeRawFromCompose();
-  if (!el.draftName.value.trim()) el.draftName.value = "Triphala";
-  renderDraftList(lastDrafts);
-  setStatus("ok", "Loaded Triphala — three registry ingredients.");
+  el.ingredientSearch.value = "Terminalia chebula";
+  renderSuggestions();
+  setStatus("ok", "Triphala is three herbs. Research each name, starting with Terminalia chebula.");
 });
 
 el.tabReview.addEventListener("click", () => showTab("review"));
 el.enrichPropose.addEventListener("click", proposeCandidate);
-el.enrichRefresh.addEventListener("click", () => loadCandidates());
+el.enrichRefresh.addEventListener("click", () => {
+  lastCandidate = null;
+  if (el.candidateDetail) el.candidateDetail.innerHTML = "";
+  loadCandidates();
+});
 el.candidateList.addEventListener("click", (event) => {
-  const open = event.target.closest("[data-open-candidate]");
   const approve = event.target.closest("[data-approve-candidate]");
   const reject = event.target.closest("[data-reject-candidate]");
-  if (open) loadCandidate(open.dataset.openCandidate);
   if (approve) decideCandidate(approve.dataset.approveCandidate, "approve");
   if (reject) decideCandidate(reject.dataset.rejectCandidate, "reject");
 });
@@ -1117,12 +1285,9 @@ el.candidateDetail.addEventListener("click", (event) => {
 });
 
 el.loadSampleCompose.addEventListener("click", () => {
-  currentDraftId = null;
-  fillCompose(SAMPLE_SPEC);
-  writeRawFromCompose();
-  if (!el.draftName.value.trim()) el.draftName.value = "Ashwagandha sample";
-  renderDraftList(lastDrafts);
-  setStatus("ok", "Loaded ashwagandha sample into the compose form.");
+  el.ingredientSearch.value = "Withania somnifera";
+  renderSuggestions();
+  setStatus("ok", "Search prefilled with Withania somnifera. Research and approve before modernize.");
 });
 
 el.editJson.addEventListener("click", () => {
@@ -1229,6 +1394,44 @@ function npLine(block) {
   return `${parts.join(" > ") || "No labels"} (${block.source || "NPClassifier"}${when})`;
 }
 
+function safeHttps(url) {
+  const text = String(url || "");
+  return /^https:\/\//i.test(text) ? text : "";
+}
+
+function ayushEvidence(block) {
+  if (!block || typeof block !== "object") return "";
+  const heading = "Ayush Research Portal";
+  if (block.status !== "ok") {
+    const reason = block.reason ? ` — ${block.reason}` : "";
+    return `
+      <article class="taxonomy-block" data-ayush-portal>
+        <h4>${heading}</h4>
+        <p>${escapeHtml(block.status || "unavailable")}${escapeHtml(reason)}</p>
+      </article>`;
+  }
+  const rows = Array.isArray(block.records) && block.records.length ? block.records : block.hits || [];
+  const items = rows
+    .slice(0, 5)
+    .map((hit) => {
+      const href = safeHttps(hit.record_url);
+      const label = escapeHtml(hit.arp_id || "record");
+      const link = href ? `<a href="${escapeHtml(href)}" rel="noreferrer">${label}</a>` : label;
+      const cite = hit.citation && hit.citation.url ? safeHttps(hit.citation.url) : "";
+      const citeLink = cite ? ` · <a href="${escapeHtml(cite)}" rel="noreferrer">${escapeHtml(hit.citation.source || "citation")}</a>` : "";
+      return `<li>${link} ${escapeHtml(hit.title || "")} · ${escapeHtml(hit.journal || "")} · ${escapeHtml(hit.confidence || "")} / ${escapeHtml(hit.review_status || "")}${citeLink}</li>`;
+    })
+    .join("");
+  const attribution = rows[0] && rows[0].attribution ? `<p>${escapeHtml(rows[0].attribution)}</p>` : "";
+  return `
+    <article class="taxonomy-block" data-ayush-portal>
+      <h4>${heading}</h4>
+      <p>${escapeHtml(block.source || heading)} · ${escapeHtml(block.retrieved_at || "")}</p>
+      <ul>${items || "<li>No portal hits.</li>"}</ul>
+      ${attribution}
+    </article>`;
+}
+
 function renderCandidateDetail(doc) {
   const markers = Array.isArray(doc.markers) ? doc.markers : [];
   const markerHtml = markers
@@ -1251,110 +1454,80 @@ function renderCandidateDetail(doc) {
   el.candidateDetail.innerHTML = `
     <article class="candidate-card">
       <h3>${escapeHtml(doc.query || "candidate")} · ${escapeHtml(doc.status || "")}</h3>
-      <p>${escapeHtml((doc.taxonomy && doc.taxonomy.scientific_name) || "")} · proposed ${escapeHtml(doc.proposed_ingredient_id || "—")} · not in the Compose picker until approved</p>
+      <p>${escapeHtml((doc.taxonomy && doc.taxonomy.scientific_name) || "")} · ${escapeHtml(doc.ingredient_id || "no id yet")} · approval stays on this page, not in a stored list</p>
       <p>${escapeHtml(imppatLine(doc.imppat))}</p>
       <p>${escapeHtml(justification.status === "ok" ? justification.narrative || "" : "LLM justification unavailable.")}</p>
-      ${pending ? `<div class="actions"><button type="button" class="primary" data-approve-candidate="${escapeHtml(doc.candidate_id)}">Approve</button><button type="button" class="ghost" data-reject-candidate="${escapeHtml(doc.candidate_id)}">Reject</button></div>` : ""}
+      ${pending ? `<div class="actions"><button type="button" class="primary" data-approve-candidate="local">Approve for this formulation</button><button type="button" class="ghost" data-reject-candidate="local">Discard</button></div>` : ""}
     </article>
+    ${ayushEvidence(doc.ayush_portal)}
     ${markerHtml}`;
 }
 
-function renderCandidateList(rows) {
-  const list = Array.isArray(rows) ? rows : [];
-  if (!list.length) {
-    el.candidateList.innerHTML = `<p class="draft-empty">No enrichment candidates stored.</p>`;
-    return;
-  }
-  el.candidateList.innerHTML = list
-    .map((row) => {
-      const markers = (row.marker_names || []).join(", ");
-      return `
-        <article class="candidate-card">
-          <h3>${escapeHtml(row.query || row.candidate_id)}</h3>
-          <p>${escapeHtml(row.status || "")} · ${escapeHtml(row.proposed_ingredient_id || "no id yet")} · ${escapeHtml(markers || "no markers")}</p>
-          <div class="actions">
-            <button type="button" class="ghost" data-open-candidate="${escapeHtml(row.candidate_id)}">Review</button>
-          </div>
-        </article>`;
-    })
-    .join("");
+function renderCandidateList() {
+  el.candidateList.innerHTML = `<p class="draft-empty">Nothing is stored between requests. Research a name to inspect it here.</p>`;
 }
 
-async function loadCandidates() {
-  const res = await fetch("/enrich/candidates", { headers: { accept: "application/json" } });
-  const body = await res.json().catch(() => null);
-  if (!res.ok) {
-    setStatus("error", `Could not load candidates (${res.status})\n${formatErrorDetail(body && body.detail)}`);
-    return;
-  }
-  renderCandidateList((body && body.candidates) || []);
-}
-
-async function loadCandidate(id) {
-  const res = await fetch(`/enrich/candidates/${encodeURIComponent(id)}`, {
-    headers: { accept: "application/json" },
-  });
-  const body = await res.json().catch(() => null);
-  if (!res.ok) {
-    setStatus("error", `Could not load candidate (${res.status})\n${formatErrorDetail(body && body.detail)}`);
-    return;
-  }
-  renderCandidateDetail(body);
+function loadCandidates() {
+  renderCandidateList();
 }
 
 async function proposeCandidate() {
   const query = el.enrichQuery.value.trim();
   if (!query) {
-    setStatus("error", "Enter a species or common name to propose.");
+    setStatus("error", "Enter a species or common name to research.");
     return;
   }
   const payload = { query };
   const part = el.enrichPart.value.trim();
   if (part) payload.part_used = part;
-  const res = await fetch("/enrich/propose", {
+  setStatus(null, "Researching…");
+  const res = await fetch("/research", {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify(payload),
   });
   const body = await res.json().catch(() => null);
   if (!res.ok) {
-    setStatus("error", `Propose failed (${res.status})\n${formatErrorDetail(body && body.detail)}`);
+    setStatus("error", `Research failed (${res.status})\n${formatErrorDetail(body && body.detail)}`);
     return;
   }
+  lastCandidate = body;
   renderCandidateDetail(body);
-  await loadCandidates();
-  setStatus("ok", `Stored pending candidate ${body.candidate_id}. It is not in the Compose picker.`);
+  setStatus("ok", "Research finished. Approve to hold it on this formulation.");
 }
 
-async function decideCandidate(id, action) {
-  const path = action === "approve" ? "approve" : "reject";
-  const payload = action === "reject" ? { reason: "rejected in review" } : {};
-  const res = await fetch(`/enrich/candidates/${encodeURIComponent(id)}/${path}`, {
+async function decideCandidate(_id, action) {
+  if (action !== "approve") {
+    lastCandidate = null;
+    el.candidateDetail.innerHTML = "";
+    setStatus("ok", "Discarded. Nothing was stored.");
+    return;
+  }
+  if (!lastCandidate) {
+    setStatus("error", "Research an ingredient before approving it.");
+    return;
+  }
+  const res = await fetch("/research/approve", {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ candidate: lastCandidate }),
   });
   const body = await res.json().catch(() => null);
   if (!res.ok) {
-    setStatus("error", `${action} failed (${res.status})\n${formatErrorDetail(body && body.detail)}`);
+    setStatus("error", `Approval failed (${res.status})\n${formatErrorDetail(body && body.detail)}`);
     return;
   }
+  rememberApproval(body);
+  addRegistryIngredient(body.ingredient_id);
   renderCandidateDetail(body);
-  await loadCandidates();
-  if (action === "approve") {
-    await loadIngredients();
-    const decided = body.decision && body.decision.ingredient_id;
-    setStatus("ok", `Approved ${decided || id}. It is now on GET /ingredients.`);
-  } else {
-    setStatus("ok", `Rejected ${id}. It stays out of the Compose picker.`);
-  }
+  setStatus("ok", `Approved ${(body.ingredient && body.ingredient.botanical_name) || body.ingredient_id} (${body.ingredient_id}) for this formulation. Run Modernize uses this approval.`);
 }
 
 async function boot() {
   try {
     await loadIngredients();
   } catch (err) {
-    setStatus("error", `Could not load the ingredient registry.\n${err.message}`);
+    setStatus("error", `Could not prepare the form.\n${err.message}`);
   }
   try {
     await loadDraftList();

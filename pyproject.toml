@@ -27,3 +27,8 @@ include = ["herbenzo*"]
 
 [tool.setuptools.package-data]
 herbenzo = ["data/*.json", "static/*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "live: opt-in calls to external services; skipped unless HERBENZO_LIVE_TESTS=1",
+]

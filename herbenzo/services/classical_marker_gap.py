@@ -1,18 +1,17 @@
-"""Advisory indicator for classical Ayurvedic forms with no active-marker assignment.
+"""Advisory indicator for an approved ingredient with no standardization marker.
 
-The signal is a gap already stored on the ingredient registry: ``markers`` is
-empty. This module does not invent a marker, a physicochemical profile, or a
-pharmacological claim.
+The signal is an empty marker list on this request's approval. It is not a
+registry miss. This module does not invent a marker, a physicochemical
+profile, or a pharmacological claim.
 
-A hit is indicator-only. Callers must keep modernization, evidence retrieval,
-and citation adjudication running, and must not treat the indicator as a
-confidence-floor violation.
+A hit is indicator-only. Callers must keep modernization of marker-backed
+ingredients running, and must not treat the indicator as a confidence-floor
+violation. The code name stays ``classical_active_marker_gap`` so existing
+readers keep working; the flag now also covers non-classical forms.
 
 herbenzo-contracts has no field for this yet. The pipeline report carries it
-*beside* ``sku`` (``classical_active_marker_gap``). The HTTP body adds the same
-object only after outbound contract validation, so a marker-backed
-ModernizedSKU still validates. When contracts grow an optional field, it can
-move onto the SKU without changing this detection.
+*beside* ``sku``. The HTTP body adds the same object only after outbound
+contract validation.
 """
 
 from __future__ import annotations
@@ -24,9 +23,13 @@ from herbenzo.schemas.contracts import FormulationSpec
 __all__ = [
     "CLASSICAL_PREPARATION_FORMS",
     "INDICATOR_CODE",
+    "RELEASE_REQUIREMENT",
     "classical_active_marker_gap",
+    "marker_warnings",
     "matched_classical_forms",
 ]
+
+RELEASE_REQUIREMENT = "requires marker before release"
 
 INDICATOR_CODE = "classical_active_marker_gap"
 
@@ -59,13 +62,28 @@ CLASSICAL_PREPARATION_FORMS: tuple[str, ...] = (
 _FORM_SET = frozenset(CLASSICAL_PREPARATION_FORMS)
 _TOKEN = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 
-_GAP_REASON = "no standardization marker assigned in the ingredient registry"
+_GAP_REASON = "marker pending: no PubChem standardization marker on this approved ingredient"
 
-_MESSAGE = (
-    "Classical Ayurvedic preparation has no established active-marker data "
-    "in the ingredient registry. Indicator only: modernization, evidence "
-    "retrieval, and citation adjudication are not stopped, and this is not "
-    "a confidence-floor violation."
+_HOW_TO_ADD = (
+    "Add one by adjudication: POST /research/marker with this request's approval "
+    "and marker_name set to a specific compound (for Clitoria ternatea, Ternatin A1 or clitorin). "
+    "Then POST /modernize again with that updated approval. A name alone is not enough."
+)
+
+_MESSAGE_ALL_PENDING = (
+    "Marker pending. The SKU is returned with each unmarked ingredient flagged unstandardized. "
+    "QC, specification, and label fields that need a marker stay pending. "
+    "This does not block SKU generation. Release requires a marker. "
+    "The indicator does not change the confidence floor. "
+    + _HOW_TO_ADD
+)
+
+_MESSAGE_PARTIAL = (
+    "Marker pending on some approved ingredients. Those ingredients stay in the SKU as unstandardized. "
+    "Marker-backed ingredients keep their chemistry. "
+    "This does not block SKU generation. Release requires a marker on each pending ingredient. "
+    "The indicator does not change the confidence floor. "
+    + _HOW_TO_ADD
 )
 
 
@@ -95,16 +113,13 @@ def classical_active_marker_gap(
     spec: FormulationSpec,
     registries,
 ) -> dict | None:
-    """Build the advisory payload, or ``None`` when the indicator does not apply.
+    """Build the advisory payload, or ``None`` when every ingredient has a marker.
 
-    ``registries`` is anything with ``lookup_ingredient``. Unknown ingredient
-    IDs still raise ``UnknownIngredient`` — missing identity is not this
-    indicator. A named marker whose physicochemical cache is empty is also
-    not this indicator; that remains ``UnknownMarker`` from descriptor lookup.
+    ``registries`` is anything with ``lookup_ingredient``. An id that is not on
+    the approval snapshot still raises. A named marker whose descriptor block
+    is missing is not this indicator; descriptor lookup raises ``UnknownMarker``.
     """
     forms = matched_classical_forms(spec.dosage_form, spec.product_name)
-    if not forms:
-        return None
 
     gaps: list[dict] = []
     for ing in spec.ingredients:
@@ -115,22 +130,46 @@ def classical_active_marker_gap(
             {
                 "ingredient_id": ing.ingredient_id,
                 "botanical_name": ing.botanical_name,
+                "marker_status": "pending",
                 "reason": _GAP_REASON,
             }
         )
     if not gaps:
         return None
 
+    all_pending = len(gaps) == len(spec.ingredients)
     return {
         "code": INDICATOR_CODE,
         "present": True,
         "advisory_only": True,
         "blocking": False,
         "affects_confidence_floor": False,
+        "marker_status": "pending",
         "matched_forms": list(forms),
         "formulation_id": spec.formulation_id,
         "product_name": spec.product_name,
         "dosage_form": spec.dosage_form,
-        "message": _MESSAGE,
+        "message": _MESSAGE_ALL_PENDING if all_pending else _MESSAGE_PARTIAL,
+        "release": RELEASE_REQUIREMENT,
+        "how_to_add_marker": {
+            "method": "POST",
+            "path": "/research/marker",
+            "fields": ["approval", "marker_name"],
+            "note": _HOW_TO_ADD,
+        },
         "ingredients": gaps,
     }
+
+
+def marker_warnings(gap: dict | None) -> list[str]:
+    """Top-level ``marker_pending`` warnings. Empty when every ingredient has a marker."""
+    if not gap:
+        return []
+    warnings: list[str] = []
+    for item in gap.get("ingredients") or []:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("botanical_name") or item.get("ingredient_id") or "").strip()
+        if label:
+            warnings.append(f"marker_pending: {label}")
+    return warnings

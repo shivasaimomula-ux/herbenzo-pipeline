@@ -50,6 +50,7 @@ class CachedJsonClient:
         max_retries: int = 4,
         backoff_base_s: float = 0.4,
         sleep: Callable[[float], None] = time.sleep,
+        cache_enabled: bool = True,
     ) -> None:
         self.cache_dir = pathlib.Path(cache_dir)
         self.transport = transport or urllib_transport
@@ -58,16 +59,19 @@ class CachedJsonClient:
         self.user_agent = user_agent
         self.max_retries = max_retries
         self.backoff_base_s = backoff_base_s
+        self.cache_enabled = bool(cache_enabled)
         self._sleep = sleep
         self._lock = threading.Lock()
         self._last_call = 0.0
 
     def get_bytes(self, url: str, *, cache_key: str) -> tuple[bytes, str]:
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = self.cache_dir / f"{_safe_key(cache_key)}.json"
-        if cache_file.exists():
-            cached = json.loads(cache_file.read_text(encoding="utf-8"))
-            return cached["body"].encode("utf-8"), str(cached["retrieved_at"])
+        cache_file = None
+        if self.cache_enabled:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_file = self.cache_dir / f"{_safe_key(cache_key)}.json"
+            if cache_file.exists():
+                cached = json.loads(cache_file.read_text(encoding="utf-8"))
+                return cached["body"].encode("utf-8"), str(cached["retrieved_at"])
 
         headers = {"User-Agent": self.user_agent, "Accept": "application/json, application/xml, text/xml"}
         last_status: int | None = None
@@ -90,12 +94,13 @@ class CachedJsonClient:
                 continue
             if status >= 400:
                 raise HttpError(status, url, raw.decode("utf-8", errors="replace")[:500])
-            text = raw.decode("utf-8", errors="replace")
             retrieved_at = datetime.now(UTC).isoformat()
-            cache_file.write_text(
-                json.dumps({"retrieved_at": retrieved_at, "body": text}, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            if self.cache_enabled and cache_file is not None:
+                text = raw.decode("utf-8", errors="replace")
+                cache_file.write_text(
+                    json.dumps({"retrieved_at": retrieved_at, "body": text}, ensure_ascii=False),
+                    encoding="utf-8",
+                )
             return raw, retrieved_at
         raise HttpError(last_status or 0, url, last_body or "request failed")
 

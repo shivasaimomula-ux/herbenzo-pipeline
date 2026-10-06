@@ -47,11 +47,33 @@ def attach_provenance_thread(spec: FormulationSpec, sku: ModernizedSKU) -> Moder
     return sku.model_copy(update={"provenance_thread": thread})
 
 
+# Pipeline-local annotations. The shared ModernizedSKU has no field for a
+# pending marker, so they are removed before that gate. A pending ingredient
+# still fails the gate because its descriptor block is empty on purpose.
+_LOCAL_ANNOTATIONS = ("marker_status", "standardization")
+
+
+def _strip_local_annotations(data: dict[str, Any]) -> dict[str, Any]:
+    cleaned = json.loads(json.dumps(data))
+    for ing in cleaned.get("ingredients") or []:
+        if not isinstance(ing, dict):
+            continue
+        ing.pop("marker_status", None)
+        for block in ("marker", "bcs", "delivery"):
+            node = ing.get(block)
+            if isinstance(node, dict):
+                for key in _LOCAL_ANNOTATIONS:
+                    node.pop(key, None)
+    return cleaned
+
+
 def validate_outbound_modernized_sku(payload: dict[str, Any] | Any) -> ModernizedSKU:
     # Local B ModernizedSKU is a distinct class — always re-validate via JSON dump.
     if hasattr(payload, "model_dump"):
-        return ModernizedSKU.model_validate(payload.model_dump(mode="json"))
-    return ModernizedSKU.model_validate(payload)
+        data = payload.model_dump(mode="json")
+    else:
+        data = payload
+    return ModernizedSKU.model_validate(_strip_local_annotations(data))
 
 
 def format_cli_error(exc: BaseException) -> str:

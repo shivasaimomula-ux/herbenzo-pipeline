@@ -33,7 +33,7 @@ limitation is stated in the rationale rather than left implicit.
 from __future__ import annotations
 
 from herbenzo.schemas.contracts import BCSAssessment, BCSClass, PhysicochemicalProfile
-from herbenzo.services.registries import MarkerRecord
+from herbenzo.services.records import MarkerRecord
 
 __all__ = ["classify", "SOLUBILITY_LOGP_CUTOFF", "PERMEABILITY_TPSA_CUTOFF"]
 
@@ -77,10 +77,16 @@ def _solubility_call(p: PhysicochemicalProfile) -> tuple[str, list[str], bool]:
         lines.append("Low solubility predicted: " + "; ".join(reasons) + ".")
         call = "low"
     else:
-        lines.append(
-            f"High solubility predicted: XLogP {p.xlogp} < {SOLUBILITY_LOGP_CUTOFF} "
-            f"and MW {p.molecular_weight} ≤ {MW_CUTOFF}."
-        )
+        if p.xlogp is None:
+            lines.append(
+                f"High solubility predicted from MW {p.molecular_weight} ≤ {MW_CUTOFF}. "
+                "XLogP was not reported."
+            )
+        else:
+            lines.append(
+                f"High solubility predicted: XLogP {p.xlogp} < {SOLUBILITY_LOGP_CUTOFF} "
+                f"and MW {p.molecular_weight} ≤ {MW_CUTOFF}."
+            )
         call = "high"
     lines.append(
         "Solubility is inferred from computed descriptors; lattice-limited solubility "

@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from herbenzo.api import app
 from herbenzo.components.modernizer.modernizer import ENGINE_VERSION
+from tests.legacy_snapshot import envelope
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "ashwagandha.json"
@@ -63,7 +64,7 @@ def test_modernize_ashwagandha(client: TestClient):
         "formulation_id": "F-ASHW-001",
         "stages": ["F", "A"],
     }
-    r = client.post("/modernize", json=raw)
+    r = client.post("/modernize", json=envelope(raw))
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["sku_id"] == "SKU-F-ASHW-001"
@@ -106,7 +107,10 @@ def test_modernize_rejects_unknown_ingredient(client: TestClient):
     raw["ingredients"][0]["ingredient_id"] = "HB-NOPE"
     r = client.post("/modernize", json=raw)
     assert r.status_code == 422
-    assert r.json()["detail"]["error"] == "unknown_ingredient"
+    detail = r.json()["detail"]
+    assert detail["error"] == "not_approved"
+    assert "HB-NOPE" in detail["message"]
+    assert '\\"' not in detail["message"]
 
 
 def test_modernize_rejects_non_object(client: TestClient):

@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from herbenzo.api import app
+from tests.legacy_snapshot import approval_for, envelope
 
 ROOT = Path(__file__).resolve().parents[1]
 TRIPHALA = ROOT / "examples" / "triphala.json"
@@ -32,7 +33,7 @@ def _triphala() -> dict:
 
 def test_multi_ingredient_spec_modernizes(client: TestClient):
     spec = _triphala()
-    response = client.post("/modernize", json=spec)
+    response = client.post("/modernize", json=envelope(spec))
     assert response.status_code == 200, response.text
     body = response.json()
     assert [row["ingredient_id"] for row in body["ingredients"]] == ["HB-HARI", "HB-BIBH", "HB-AMLA"]
@@ -50,19 +51,29 @@ def test_mixed_known_and_unknown_ids_report_the_unknown_id(client: TestClient):
             "quantity_mg": 50,
         }
     )
-    response = client.post("/modernize", json=spec)
+    response = client.post(
+        "/modernize",
+        json={
+            "spec": spec,
+            "approvals": [approval_for("HB-HARI"), approval_for("HB-AMLA")],
+        },
+    )
     assert response.status_code == 422
     detail = response.json()["detail"]
-    assert detail["error"] == "unknown_ingredient"
-    assert detail["unknown_ids"] == ["HB-NOPE", "HB-ALSO"]
-    assert "HB-HARI" not in detail["unknown_ids"]
-    assert "HB-NOPE" in json.dumps(detail)
-    assert "HB-ALSO" in json.dumps(detail)
+    assert detail["error"] == "not_approved"
+    assert detail["ingredient_ids"] == ["HB-NOPE", "HB-ALSO"]
+    assert "HB-HARI" not in detail["ingredient_ids"]
+    assert "HB-NOPE" in detail["message"]
+    assert "HB-ALSO" in detail["message"]
+    assert '\\"' not in detail["message"]
 
 
 def test_draft_round_trips_multiple_ingredients(client: TestClient):
     spec = _triphala()
-    saved = client.post("/drafts", json={"name": "Triphala", "spec": spec})
+    saved = client.post(
+        "/drafts",
+        json={"name": "Triphala", "spec": spec, "approvals": envelope(spec)["approvals"]},
+    )
     assert saved.status_code == 201, saved.text
     body = saved.json()
     assert body["complete"] is True
@@ -72,7 +83,10 @@ def test_draft_round_trips_multiple_ingredients(client: TestClient):
     ids = [row["ingredient_id"] for row in loaded.json()["spec"]["ingredients"]]
     assert ids == ["HB-HARI", "HB-BIBH", "HB-AMLA"]
     assert loaded.json()["spec"]["ingredients"][0]["quantity_mg"] == 1000.0
-    again = client.post("/modernize", json=loaded.json()["spec"])
+    again = client.post(
+        "/modernize",
+        json={"spec": loaded.json()["spec"], "approvals": loaded.json()["approvals"]},
+    )
     assert again.status_code == 200, again.text
     assert len(again.json()["ingredients"]) == 3
 
@@ -84,12 +98,12 @@ def test_compose_picker_is_multi_select_and_separate_from_review(client: TestCli
     assert 'id="ingredient-search"' in text
     assert "Load Triphala" in text
     assert "Review candidates" in text
-    assert "GET /ingredients" in text
-    assert "Pending enrichment candidates are not listed" in text
+    assert "Live species search" in text or "NCBI Taxonomy" in text
+    assert 'id="ingredient-search"' in text
     script = client.get("/static/app.js")
     assert script.status_code == 200
     source = script.text
-    assert 'fetch("/ingredients"' in source
-    assert "/enrich/candidates" in source
+    assert "/research/suggest" in source
+    assert 'fetch("/ingredients"' not in source
     assert "TRIPHALA_SPEC" in source
     assert source.count("ingredient_id:") >= 3

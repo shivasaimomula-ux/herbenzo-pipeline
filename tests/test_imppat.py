@@ -14,8 +14,6 @@ from fastapi.testclient import TestClient
 from herbenzo.api import app
 from herbenzo.clients.llm import LlmClient
 from herbenzo.config import get_settings, repo_root
-from herbenzo.services.candidate_store import CandidateStore
-from herbenzo.services.enrichment import EnrichmentService
 from herbenzo.services.imppat import (
     PHYTO_FILE,
     PLANT_FILE,
@@ -24,7 +22,7 @@ from herbenzo.services.imppat import (
     SOURCE,
     ImppatLookup,
 )
-from herbenzo.services.overlay import load_approved_documents
+from herbenzo.services.research import ResearchService
 
 _RETRIEVED = "2026-10-06T00:00:00+00:00"
 _TAXONOMY_XML = """<?xml version="1.0" ?>
@@ -62,14 +60,23 @@ _PHYTO_HEADER = (
 
 
 class _Eutils:
-    def search(self, db: str, term: str, *, retmax: int = 5) -> dict:
-        ids = {"taxonomy": ["424242"], "pccompound": ["100"]}.get(db, [])
+    def search(self, db: str, term: str, *, retmax: int = 5, sort: str | None = None) -> dict:
+        ids = {
+            "taxonomy": ["424242"],
+            "pccompound": ["100"],
+            "pubmed": ["321"],
+        }.get(db, [])
         return {"db": db, "term": term, "count": len(ids), "ids": ids[:retmax], "retrieved_at": _RETRIEVED}
 
     def summary(self, db: str, ids: list[str]) -> dict:
-        return {"db": db, "records": [], "retrieved_at": _RETRIEVED}
+        records = []
+        if db == "pubmed":
+            records = [{"uid": "321", "title": "Pharmacology of Fakus exemplaris", "pubdate": "2020"}]
+        return {"db": db, "records": records, "retrieved_at": _RETRIEVED}
 
-    def fetch_text(self, db: str, ids: list[str], *, retmode: str = "xml") -> tuple[str, str]:
+    def fetch_text(self, db: str, ids: list[str], *, retmode: str = "xml", rettype: str | None = None) -> tuple[str, str]:
+        if db == "pubmed":
+            return "PMID: 321\nPharmacology abstract.\n", _RETRIEVED
         assert db == "taxonomy"
         return _TAXONOMY_XML, _RETRIEVED
 
@@ -114,14 +121,15 @@ class _Chem:
         }
 
 
-def _service(tmp_path: Path, directory: Path | None) -> EnrichmentService:
-    return EnrichmentService(
+def _service(tmp_path: Path, directory: Path | None) -> ResearchService:
+    del tmp_path
+    return ResearchService(
         eutils=_Eutils(),
         pubchem=_PubChem(),
         chemclass=_Chem(),
         llm=LlmClient(api_key=None),
-        store=CandidateStore(tmp_path),
         imppat=ImppatLookup(directory),
+        min_pubmed_refs=1,
     )
 
 
@@ -188,7 +196,7 @@ def _spec(ingredient_id: str) -> dict:
 
 
 def test_ncbi_only_match_passes_when_imppat_dir_is_missing(tmp_path: Path):
-    doc = _service(tmp_path, tmp_path / "missing-imppat").propose("fakewort")
+    doc = _service(tmp_path, tmp_path / "missing-imppat").research("fakewort")
     assert doc["status"] == "pending"
     assert doc["taxonomy"]["scientific_name"] == "Fakus exemplaris"
     assert doc["taxonomy"]["synonyms"] == ["Fakus antiquus"]
@@ -203,7 +211,7 @@ def test_ncbi_only_match_passes_when_imppat_dir_is_missing(tmp_path: Path):
 def test_ncbi_and_imppat_match_includes_ayurvedic_fields(tmp_path: Path):
     cache = tmp_path / "cache"
     _matched_cache(cache)
-    doc = _service(tmp_path, cache).propose("fakewort")
+    doc = _service(tmp_path, cache).research("fakewort")
     assert doc["status"] == "pending"
     assert doc["taxonomy"]["source"] == "NCBI Taxonomy"
     imppat = doc["imppat"]
@@ -246,24 +254,29 @@ def test_ncbi_match_with_no_imppat_hit_stays_approvable(tmp_path: Path, monkeypa
         ["FAKEPLANT9999\tOtherus fakeus\tDecoyus plantus\tPlantae\tNopeaceae\tMadeup\tDecoywort\t\tFictional"],
     )
     service = _service(tmp_path, cache)
-    doc = service.propose("fakewort")
+    doc = service.research("fakewort")
     assert doc["taxonomy"]["scientific_name"] == "Fakus exemplaris"
     assert doc["imppat"]["status"] == "no_match"
     assert doc["imppat"]["source"] == SOURCE
     assert doc["imppat"]["error"] is None
     assert doc["imppat"]["plants"] == []
     assert doc["imppat"]["formulations"] == []
-    approved = service.approve(doc["candidate_id"])
+    approved = service.approve(doc)
     assert approved["status"] == "approved"
     assert approved["imppat"]["status"] == "no_match"
+    assert approved["imppat_copied"] is False
+    assert approved["ingredient"]["sanskrit_name"] is None
 
     client = TestClient(app)
     unknown = client.post("/modernize", json=_spec("HB-NOPE"))
     assert unknown.status_code == 422
-    assert unknown.json()["detail"]["error"] == "unknown_ingredient"
-    assert unknown.json()["detail"]["unknown_ids"] == ["HB-NOPE"]
-    ingredient_id = approved["decision"]["ingredient_id"]
-    modernized = client.post("/modernize", json=_spec(ingredient_id))
+    assert unknown.json()["detail"]["error"] == "not_approved"
+    assert "HB-NOPE" in unknown.json()["detail"]["message"]
+    ingredient_id = approved["ingredient_id"]
+    modernized = client.post(
+        "/modernize",
+        json={"spec": _spec(ingredient_id), "approvals": [approved]},
+    )
     assert modernized.status_code == 200, modernized.text
 
 
@@ -278,7 +291,7 @@ def test_missing_empty_and_corrupt_imppat_are_unavailable(tmp_path: Path, kind: 
         (directory / POLY_FILE).write_text("not\ta\treal\theader\n", encoding="utf-8")
     elif kind == "header_only":
         _write(directory, PLANT_FILE, _PLANT_HEADER, [])
-    doc = _service(tmp_path, directory).propose("fakewort")
+    doc = _service(tmp_path, directory).research("fakewort")
     assert doc["status"] == "pending"
     assert doc["taxonomy"]["scientific_name"] == "Fakus exemplaris"
     assert doc["imppat"]["status"] == "unavailable"
@@ -297,7 +310,7 @@ def test_ambiguous_imppat_hit_does_not_block_propose(tmp_path: Path):
             "FAKEPLANT0002\tFakus antiquus\t\tPlantae\tFakaceae\tMadeup\tOld fakewort\t\tFictional",
         ],
     )
-    doc = _service(tmp_path, cache).propose("fakewort")
+    doc = _service(tmp_path, cache).research("fakewort")
     assert doc["status"] == "pending"
     assert doc["imppat"]["status"] == "ambiguous"
     assert {row["plant_identifier"] for row in doc["imppat"]["plants"]} == {"FAKEPLANT0001", "FAKEPLANT0002"}
@@ -317,18 +330,15 @@ def test_matched_imppat_fields_are_copied_on_approval(tmp_path: Path, monkeypatc
     cache = tmp_path / "cache"
     _matched_cache(cache)
     service = _service(tmp_path / "candidates", cache)
-    doc = service.propose("fakewort")
+    doc = service.research("fakewort")
     assert doc["imppat"]["status"] == "matched"
-    approved = service.approve(doc["candidate_id"])
+    approved = service.approve(doc)
     assert approved["status"] == "approved"
-    rows = load_approved_documents()
-    assert len(rows) == 1
-    overlay = rows[0]
-    assert overlay["imppat"]["source"] == SOURCE
-    assert overlay["imppat"]["license"] == "CC BY-NC-ND 4.0"
-    assert len(overlay["imppat"]["citations"]) == 3
-    assert overlay["imppat"]["formulations"]
-    ingredient = overlay["ingredient"]
+    assert approved["imppat"]["source"] == SOURCE
+    assert approved["imppat"]["license"] == "CC BY-NC-ND 4.0"
+    assert len(approved["imppat"]["citations"]) == 3
+    assert approved["imppat"]["formulations"]
+    ingredient = approved["ingredient"]
     assert ingredient["sanskrit_name"] in doc["imppat"]["sanskrit_names"]
     assert ingredient["sanskrit_name"]
     extras = [name for name in doc["imppat"]["sanskrit_names"] if name != ingredient["sanskrit_name"]]
@@ -336,12 +346,8 @@ def test_matched_imppat_fields_are_copied_on_approval(tmp_path: Path, monkeypatc
         assert name in ingredient["synonyms"]
     assert "Oldus fakus" in ingredient["synonyms"]
     assert "IMPPAT 3.0" in ingredient["markers"][0]["rationale"]
-    # Several standardised parts: do not guess one.
     assert ingredient["part_used"] == "unspecified"
-    listed = TestClient(app).get("/ingredients").json()["ingredients"]
-    row = next(item for item in listed if item["ingredient_id"] == ingredient["ingredient_id"])
-    assert row["sanskrit_name"] == ingredient["sanskrit_name"]
-    assert "Oldus fakus" in row["synonyms"]
+    assert approved["ingredient_id"] == "tax-424242"
 
 
 def test_single_imppat_part_fills_an_unspecified_part(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -358,11 +364,9 @@ def test_single_imppat_part_fills_an_unspecified_part(tmp_path: Path, monkeypatc
         ["AFI-FAKE-7\tPhony Taila\tPhonyā\tphony root\tFakus exemplaris\tfake root"],
     )
     service = _service(tmp_path / "candidates", cache)
-    doc = service.approve(service.propose("fakewort")["candidate_id"])
-    overlay = load_approved_documents()[0]
-    assert overlay["ingredient"]["part_used"] == "fake root"
-    assert overlay["ingredient"]["sanskrit_name"] == "Phonyā"
-    assert overlay["imppat"]["status"] == "matched"
+    doc = service.approve(service.research("fakewort"))
+    assert doc["ingredient"]["part_used"] == "fake root"
+    assert doc["ingredient"]["sanskrit_name"] == "Phonyā"
     assert doc["imppat"]["status"] == "matched"
 
 
@@ -376,11 +380,10 @@ def test_no_match_approval_does_not_invent_imppat_fields(tmp_path: Path, monkeyp
         ["FAKEPLANT9999\tOtherus fakeus\tDecoyus plantus\tPlantae\tNopeaceae\tMadeup\tDecoywort\t\tFictional"],
     )
     service = _service(tmp_path / "candidates", cache)
-    doc = service.approve(service.propose("fakewort")["candidate_id"])
+    doc = service.approve(service.research("fakewort"))
     assert doc["imppat"]["status"] == "no_match"
-    overlay = load_approved_documents()[0]
-    assert "imppat" not in overlay
-    assert overlay["ingredient"]["sanskrit_name"] is None
+    assert doc["imppat_copied"] is False
+    assert doc["ingredient"]["sanskrit_name"] is None
 
 
 def test_standardized_spelling_is_accepted(tmp_path: Path):

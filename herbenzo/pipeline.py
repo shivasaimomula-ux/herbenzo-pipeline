@@ -23,7 +23,8 @@ from herbenzo.components.modernizer.modernizer import ENGINE_VERSION, Modernizer
 from herbenzo.schemas.contracts import FormulationSpec, ModernizedSKU
 from herbenzo.services.adjudication import AdjudicationService, Verdict
 from herbenzo.services.evidence import EvidenceStore
-from herbenzo.services.live_registries import LiveRegistriesClient
+from herbenzo.services.classical_marker_gap import marker_warnings
+from herbenzo.services.records import SnapshotLookup, provenance_from_approvals
 
 __all__ = ["Pipeline", "PIPELINE_VERSION"]
 
@@ -37,20 +38,24 @@ _PARTIAL_PENALTY = 0.05
 class Pipeline:
     def __init__(
         self,
-        registries: LiveRegistriesClient | None = None,
+        lookup: SnapshotLookup | None = None,
         evidence: EvidenceStore | None = None,
         adjudicator: AdjudicationService | None = None,
         allow_network: bool = True,
+        registries: SnapshotLookup | None = None,
+        approvals: list | None = None,
     ) -> None:
-        self.registries = registries or LiveRegistriesClient(allow_network=allow_network)
+        self.lookup = lookup or registries or SnapshotLookup()
+        self.registries = self.lookup
+        self.approvals = list(approvals or [])
         self.evidence = evidence or EvidenceStore()
         self.adjudicator = adjudicator or AdjudicationService(self.evidence)
-        self.engine = ModernizerEngine(self.registries)
+        self.engine = ModernizerEngine(self.lookup)
         self.allow_network = allow_network
 
     # -- main entry point ---------------------------------------------------
 
-    def run(self, spec: FormulationSpec | dict, max_refs_per_claim: int = 4) -> dict:
+    def run(self, spec: FormulationSpec | dict, max_refs_per_claim: int = 4, approvals: list | None = None) -> dict:
         local_spec = spec if isinstance(spec, FormulationSpec) else FormulationSpec.model_validate(spec)
         sku = self.engine.modernize(local_spec)
         # Advisory only. Never an input to confidence penalties below.
@@ -60,29 +65,18 @@ class Pipeline:
         claims: list[dict] = []
         gaps: list[str] = []
 
-        if sku is None:
-            # Classical preparation, no registry marker on any ingredient.
-            # Evidence and adjudication have nothing marker-backed to attach
-            # to; the run still finishes and reports the indicator.
-            confidence = round(float(local_spec.confidence), 4)
-            return self._report(
-                started=started,
-                sku_payload=None,
-                marker_gap=marker_gap,
-                inherited=local_spec.confidence,
-                after_modernization=confidence,
-                after_adjudication=confidence,
-                claims=claims,
-                gaps=gaps,
-            )
+        # Shared ModernizedSKU requires a PubChem marker block. A pending
+        # ingredient has none, so that gate runs only when every marker resolved.
+        # The shared models are not edited.
+        if sku is not None and not _any_marker_pending(sku):
+            from herbenzo.contract_gate import validate_outbound_modernized_sku
 
-        # Shared-package outbound gate (Audit Finding #1 / Task T6).
-        # The indicator is not part of this payload.
-        from herbenzo.contract_gate import validate_outbound_modernized_sku
-
-        validate_outbound_modernized_sku(sku)
+            validate_outbound_modernized_sku(sku)
 
         for ing in sku.ingredients:
+            if _ingredient_pending(ing):
+                claims.append(self._release_claim(sku, ing))
+                continue
             marker = ing.marker.marker_name
             delivery = ing.delivery.primary.value.replace("_", " ")
 
@@ -138,7 +132,7 @@ class Pipeline:
                 })
 
         confidence = self._apply_penalties(sku, claims)
-        return self._report(
+        report = self._report(
             started=started,
             sku_payload=json.loads(sku.model_dump_json()),
             marker_gap=marker_gap,
@@ -148,6 +142,8 @@ class Pipeline:
             claims=claims,
             gaps=gaps,
         )
+        report["research_provenance"] = provenance_from_approvals(approvals if approvals is not None else self.approvals)
+        return report
 
     def _report(
         self,
@@ -172,6 +168,7 @@ class Pipeline:
                 "retracted_sources_seen": self.evidence.retracted_pmids(),
             },
             "sku": sku_payload,
+            "warnings": marker_warnings(marker_gap),
             "classical_active_marker_gap": marker_gap,
             "confidence": {
                 "inherited_from_A": inherited,
@@ -185,6 +182,20 @@ class Pipeline:
         }
 
     # -- helpers ------------------------------------------------------------
+
+    def _release_claim(self, sku, ing) -> dict:
+        text = f"{ing.botanical_name} requires a marker before release"
+        return {
+            "claim_id": _claim_id(sku.sku_id, ing.ingredient_id, text, "marker_pending"),
+            "ingredient_id": ing.ingredient_id,
+            "stage": "B:modernizer",
+            "claim": text,
+            "pmid": None,
+            "verdict": "unsupported",
+            "reason_code": "marker_pending",
+            "evidence_tier": "none",
+            "note": "requires marker before release",
+        }
 
     def _computed_claim(self, sku, ing, text, basis, rationale) -> dict:
         return {
@@ -222,6 +233,17 @@ class Pipeline:
             elif c["verdict"] == Verdict.PARTIAL:
                 conf -= _PARTIAL_PENALTY
         return round(max(0.0, min(conf, sku.confidence)), 4)
+
+
+def _ingredient_pending(ing) -> bool:
+    if getattr(ing, "marker_status", None) == "pending":
+        return True
+    marker = getattr(ing, "marker", None)
+    return getattr(marker, "marker_status", None) == "pending"
+
+
+def _any_marker_pending(sku: ModernizedSKU) -> bool:
+    return any(_ingredient_pending(ing) for ing in sku.ingredients)
 
 
 def _delivery_query(tech: str) -> str:

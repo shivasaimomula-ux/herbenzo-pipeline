@@ -59,6 +59,39 @@ def _blank_to_none(value: str | None) -> str | None:
     return text or None
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = _blank_to_none(os.environ.get(name))
+    if raw is None:
+        return default
+    return raw.casefold() in {"1", "true", "yes", "on"}
+
+
+def _env_float(name: str, default: float, *, minimum: float) -> float:
+    raw = _blank_to_none(os.environ.get(name))
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    if value < minimum:
+        return default
+    return value
+
+
+def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    raw = _blank_to_none(os.environ.get(name))
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    if value < minimum or value > maximum:
+        return default
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     ncbi_api_key: str | None
@@ -72,6 +105,18 @@ class Settings:
     registry_dir: Path
     enrichment_cache_dir: Path
     imppat_dir: Path | None
+    ayush_portal_enabled: bool
+    ayush_portal_base_url: str
+    ayush_portal_min_interval_s: float
+    ayush_portal_timeout_s: float
+    ayush_portal_max_results: int
+    ayush_portal_user_agent: str
+    ayush_portal_license_basis: str
+    ayush_portal_permission_ref: str
+    min_pubmed_refs: int
+    research_max_steps: int
+    research_timeout_s: float
+    web_search_endpoint: str | None
 
 
 def get_settings() -> Settings:
@@ -99,7 +144,60 @@ def get_settings() -> Settings:
         else _REPO_ROOT / "herbenzo" / "data" / "registry_overlay",
         enrichment_cache_dir=Path(cache).expanduser() if cache else Path("cache") / "enrichment",
         imppat_dir=_imppat_dir(imppat),
+        ayush_portal_enabled=_env_bool("HERBENZO_AYUSH_PORTAL_ENABLED", False),
+        ayush_portal_base_url=(
+            _blank_to_none(os.environ.get("HERBENZO_AYUSH_PORTAL_BASE_URL"))
+            or "https://arp.ayush.gov.in"
+        ).rstrip("/"),
+        ayush_portal_min_interval_s=_env_float(
+            "HERBENZO_AYUSH_PORTAL_MIN_INTERVAL_S", 2.0, minimum=0.0
+        ),
+        ayush_portal_timeout_s=_env_float("HERBENZO_AYUSH_PORTAL_TIMEOUT_S", 15.0, minimum=1.0),
+        ayush_portal_max_results=_env_int(
+            "HERBENZO_AYUSH_PORTAL_MAX_RESULTS", 10, minimum=1, maximum=25
+        ),
+        ayush_portal_user_agent=(
+            _blank_to_none(os.environ.get("HERBENZO_AYUSH_PORTAL_USER_AGENT"))
+            or "herbenzo-pipeline/1.0 (Ayush Research Portal bibliographic lookup; research use)"
+        ),
+        ayush_portal_license_basis=(
+            _blank_to_none(os.environ.get("HERBENZO_AYUSH_PORTAL_LICENSE_BASIS"))
+            or "verbal_authorization"
+        ),
+        ayush_portal_permission_ref=(
+            _blank_to_none(os.environ.get("HERBENZO_AYUSH_PORTAL_PERMISSION_REF"))
+            or (
+                "CCRAS Deputy Director Srikanth, Delhi, 2026-10-06; "
+                "research use permitted for Herbenzo Ayurvedic and Herbal Pvt Ltd"
+            )
+        ),
+        min_pubmed_refs=_positive_int(os.environ.get("HERBENZO_MIN_PUBMED_REFS"), default=1),
+        research_max_steps=_positive_int(os.environ.get("HERBENZO_RESEARCH_MAX_STEPS"), default=8),
+        research_timeout_s=_positive_float(os.environ.get("HERBENZO_RESEARCH_TIMEOUT_S"), default=60.0),
+        web_search_endpoint=_blank_to_none(os.environ.get("HERBENZO_WEB_SEARCH_ENDPOINT")),
     )
+
+
+def _positive_int(value: str | None, *, default: int) -> int:
+    text = _blank_to_none(value)
+    if text is None:
+        return default
+    try:
+        number = int(text)
+    except ValueError:
+        return default
+    return number if number > 0 else default
+
+
+def _positive_float(value: str | None, *, default: float) -> float:
+    text = _blank_to_none(value)
+    if text is None:
+        return default
+    try:
+        number = float(text)
+    except ValueError:
+        return default
+    return number if number > 0 else default
 
 
 def _imppat_dir(value: str | None) -> Path | None:

@@ -174,16 +174,39 @@ class PhysicochemicalProfile(_Strict):
 
 
 class MarkerResolution(_Strict):
-    """Which compound was used to represent an ingredient, and how confident that is."""
+    """Which compound was used to represent an ingredient, and how confident that is.
+
+    ``marker_status="pending"`` means no compound was chosen. Properties stay
+    empty so a missing marker is not filled in with invented descriptors.
+    """
 
     ingredient_id: str
-    marker_name: str
+    marker_name: str | None = None
+    marker_status: Literal["resolved", "pending"] = "resolved"
+    standardization: Literal["standardized", "unstandardized"] = "standardized"
     rationale: str
     is_proxy: bool = Field(
         default=True,
         description="True when a single marker stands in for a multi-constituent extract",
     )
-    properties: PhysicochemicalProfile
+    properties: PhysicochemicalProfile | None = None
+
+    @model_validator(mode="after")
+    def _pending_has_no_invented_compound(self) -> "MarkerResolution":
+        if self.marker_status == "pending":
+            if self.properties is not None:
+                raise ValueError(
+                    "a pending marker must not carry physicochemical properties"
+                )
+            # validate_assignment re-enters this validator, so write directly.
+            object.__setattr__(self, "marker_name", None)
+            object.__setattr__(self, "standardization", "unstandardized")
+            object.__setattr__(self, "is_proxy", False)
+            return self
+        if not self.marker_name or self.properties is None:
+            raise ValueError("a resolved marker requires a name and PubChem properties")
+        object.__setattr__(self, "standardization", "standardized")
+        return self
 
 
 class BCSAssessment(_Strict):
@@ -195,13 +218,28 @@ class BCSAssessment(_Strict):
     physiological pH range and human permeability data.
     """
 
-    bcs_class: BCSClass
-    solubility_call: Literal["high", "low"]
-    permeability_call: Literal["high", "low"]
-    evidence_basis: Literal["computed_descriptors", "measured_solubility", "curated_override"]
+    bcs_class: BCSClass | None = None
+    solubility_call: Literal["high", "low", "unknown"]
+    permeability_call: Literal["high", "low", "unknown"]
+    evidence_basis: Literal[
+        "computed_descriptors", "measured_solubility", "curated_override", "unstandardized"
+    ]
     rationale: list[str] = Field(min_length=1)
     confidence: float = Field(ge=0.0, le=1.0)
     is_regulatory_determination: Literal[False] = False
+    marker_status: Literal["resolved", "pending"] = "resolved"
+
+    @model_validator(mode="after")
+    def _class_follows_marker(self) -> "BCSAssessment":
+        if self.marker_status == "pending":
+            object.__setattr__(self, "bcs_class", None)
+            object.__setattr__(self, "solubility_call", "unknown")
+            object.__setattr__(self, "permeability_call", "unknown")
+            object.__setattr__(self, "evidence_basis", "unstandardized")
+            return self
+        if self.bcs_class is None:
+            raise ValueError("BCS class is required when a marker is resolved")
+        return self
 
 
 class BioavailabilityEvidence(_Strict):
@@ -248,7 +286,7 @@ class BioavailabilityEvidence(_Strict):
 
 
 class DeliveryRecommendation(_Strict):
-    primary: DeliveryTechnology
+    primary: DeliveryTechnology | None = None
     alternatives: list[DeliveryTechnology] = Field(default_factory=list)
     rationale: list[str] = Field(min_length=1)
     excipients: list[str] = Field(default_factory=list)
@@ -258,6 +296,21 @@ class DeliveryRecommendation(_Strict):
     )
     bioavailability: BioavailabilityEvidence
     advisory_only: Literal[True] = True
+    marker_status: Literal["resolved", "pending"] = "resolved"
+    standardization: Literal["standardized", "unstandardized"] = "standardized"
+
+    @model_validator(mode="after")
+    def _carrier_follows_marker(self) -> "DeliveryRecommendation":
+        if self.marker_status == "pending":
+            object.__setattr__(self, "primary", None)
+            object.__setattr__(self, "alternatives", [])
+            object.__setattr__(self, "excipients", [])
+            object.__setattr__(self, "standardization", "unstandardized")
+            return self
+        if self.primary is None:
+            raise ValueError("delivery primary is required when a marker is resolved")
+        object.__setattr__(self, "standardization", "standardized")
+        return self
 
 
 class ModernizedIngredient(_Strict):
@@ -266,6 +319,7 @@ class ModernizedIngredient(_Strict):
     quantity_mg: float = Field(gt=0)
     crude_equivalent_mg: float | None = Field(default=None, gt=0)
     marker_dose_mg: float | None = Field(default=None, ge=0)
+    marker_status: Literal["resolved", "pending"] = "resolved"
     marker: MarkerResolution
     bcs: BCSAssessment
     delivery: DeliveryRecommendation

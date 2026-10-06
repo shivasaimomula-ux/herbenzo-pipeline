@@ -37,6 +37,7 @@ class EutilsClient:
         min_interval_s: float | None = None,
         sleep: Callable[[float], None] | None = None,
         user_agent: str = "herbenzo-pipeline/1.0",
+        cache_enabled: bool = True,
     ) -> None:
         self.api_key = _from_env("NCBI_API_KEY", api_key)
         self.email = _from_env("NCBI_EMAIL", email)
@@ -51,14 +52,18 @@ class EutilsClient:
             "transport": transport,
             "min_interval_s": self.min_interval_s,
             "user_agent": user_agent,
+            "cache_enabled": cache_enabled,
         }
         if sleep is not None:
             kwargs["sleep"] = sleep
         self.http = CachedJsonClient(**kwargs)
 
-    def search(self, db: str, term: str, *, retmax: int = 5) -> dict[str, Any]:
-        url = self._url("esearch.fcgi", db=db, term=term, retmax=retmax, retmode="json")
-        key = _hash_key("esearch", db, term, str(retmax))
+    def search(self, db: str, term: str, *, retmax: int = 5, sort: str | None = None) -> dict[str, Any]:
+        params: dict[str, Any] = {"db": db, "term": term, "retmax": retmax, "retmode": "json"}
+        if sort:
+            params["sort"] = sort
+        url = self._url("esearch.fcgi", **params)
+        key = _hash_key("esearch", db, term, str(retmax), sort or "")
         payload, retrieved_at = self._json(url, key)
         result = payload.get("esearchresult") or {}
         ids = [str(item) for item in result.get("idlist") or []]
@@ -77,12 +82,22 @@ class EutilsClient:
         payload, retrieved_at = self._json(url, key)
         return {"db": db, "records": _summary_records(payload), "retrieved_at": retrieved_at}
 
-    def fetch_text(self, db: str, ids: list[str], *, retmode: str = "xml") -> tuple[str, str]:
+    def fetch_text(
+        self,
+        db: str,
+        ids: list[str],
+        *,
+        retmode: str = "xml",
+        rettype: str | None = None,
+    ) -> tuple[str, str]:
         clean = [str(item) for item in ids if str(item).strip()]
         if not clean:
             raise EutilsError(f"no ids to fetch from {db}")
-        url = self._url("efetch.fcgi", db=db, id=",".join(clean), retmode=retmode)
-        key = _hash_key("efetch", db, ",".join(clean), retmode)
+        params: dict[str, Any] = {"db": db, "id": ",".join(clean), "retmode": retmode}
+        if rettype:
+            params["rettype"] = rettype
+        url = self._url("efetch.fcgi", **params)
+        key = _hash_key("efetch", db, ",".join(clean), retmode, rettype or "")
         raw, retrieved_at = self.http.get_bytes(url, cache_key=key)
         return raw.decode("utf-8", errors="replace"), retrieved_at
 

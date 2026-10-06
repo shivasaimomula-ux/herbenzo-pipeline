@@ -19,8 +19,14 @@ from herbenzo.format_suggestions import (
     load_catalog,
     profile_from_mapping,
     rank_formats,
-    suggest_formats,
 )
+from herbenzo.format_suggestions import suggest_formats as _suggest_formats
+from tests.legacy_snapshot import approval_for, envelope, legacy_lookup
+
+
+def suggest_formats(*args, **kwargs):
+    kwargs.setdefault("registries", legacy_lookup())
+    return _suggest_formats(*args, **kwargs)
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures" / "format_suggestions"
@@ -206,12 +212,14 @@ def test_plain_capsule_does_not_apply_chyawanprash_caution():
 
 
 def test_multi_ingredient_request_is_stable(client: TestClient):
+    ids = ["HB-HARI", "HB-BIBH", "HB-AMLA"]
     payload = {
         "ingredients": [
             {"ingredient_id": "HB-HARI", "quantity_mg": 1000},
             {"ingredient_id": "HB-BIBH", "quantity_mg": 1000},
             {"ingredient_id": "HB-AMLA", "quantity_mg": 1000},
         ],
+        "approvals": [approval_for(item) for item in ids],
         "dosage_form": "powder",
         "audience": "adults",
     }
@@ -228,14 +236,17 @@ def test_multi_ingredient_request_is_stable(client: TestClient):
 def test_unknown_ingredient_is_422(client: TestClient):
     missing = client.post("/suggest-formats", json={"ingredient_ids": ["HB-NOPE"]})
     assert missing.status_code == 422
-    assert missing.json()["detail"]["error"] == "unknown_ingredient"
+    assert missing.json()["detail"]["error"] == "not_approved"
 
     mixed = client.post(
         "/suggest-formats",
-        json={"ingredient_ids": ["HB-ASHW", "HB-NOPE"]},
+        json={
+            "ingredient_ids": ["HB-ASHW", "HB-NOPE"],
+            "approvals": [approval_for("HB-ASHW")],
+        },
     )
     assert mixed.status_code == 422
-    assert mixed.json()["detail"]["error"] == "unknown_ingredient"
+    assert mixed.json()["detail"]["error"] == "not_approved"
 
 
 def test_suggest_formats_rejects_bad_body(client: TestClient):
@@ -255,7 +266,7 @@ def test_suggest_formats_rejects_bad_body(client: TestClient):
 
 def test_modernize_response_is_unchanged_by_format_suggestions(client: TestClient):
     raw = json.loads(EXAMPLE.read_text(encoding="utf-8"))
-    modernized = client.post("/modernize", json=raw)
+    modernized = client.post("/modernize", json=envelope(raw))
     assert modernized.status_code == 200, modernized.text
     body = modernized.json()
     assert body["sku_id"] == "SKU-F-ASHW-001"
@@ -287,15 +298,27 @@ def test_health_and_ui_expose_format_suggestions(client: TestClient):
     assert style.status_code == 200
 
 
-def test_cli_suggest_formats(capsys: pytest.CaptureFixture[str]):
-    code = main(["suggest-formats", "HB-ASHW", "HB-TURM", "--audience", "adults", "--quantity", "HB-ASHW=300"])
-    assert code == 0
-    body = json.loads(capsys.readouterr().out)
+def test_cli_suggest_formats(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    approvals = tmp_path / "approvals.json"
+    approvals.write_text(json.dumps([approval_for("HB-ASHW"), approval_for("HB-TURM")]))
+    code = main([
+        "suggest-formats",
+        str(approvals),
+        "HB-ASHW",
+        "HB-TURM",
+        "--audience",
+        "adults",
+        "--quantity",
+        "HB-ASHW=300",
+    ])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    body = json.loads(captured.out)
     assert body["ingredient_ids"] == ["HB-ASHW", "HB-TURM"]
     assert body["quantities_mg"]["HB-ASHW"] == 300
     assert body["suggestions"]
 
-    unknown = main(["suggest-formats", "HB-NOPE"])
+    unknown = main(["suggest-formats", str(approvals), "HB-NOPE"])
     assert unknown == 2
     err = capsys.readouterr().err
-    assert "unknown_ingredient" in err
+    assert "not_approved" in err
