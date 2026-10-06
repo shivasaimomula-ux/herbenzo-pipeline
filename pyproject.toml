@@ -11,6 +11,7 @@ dependencies = [
     "pydantic>=2.0",
     "fastapi>=0.110",
     "uvicorn>=0.27",
+    "python-dotenv>=1.0",
     "herbenzo-contracts @ file:///Users/shivasaimomula/Desktop/herbenzo-contracts",
     "herbenzo-pubmed-cache @ file:///Users/shivasaimomula/Desktop/herbenzo_pipeline/packages/herbenzo-pubmed-cache",
 ]

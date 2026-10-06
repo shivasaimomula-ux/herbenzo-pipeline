@@ -19,12 +19,17 @@ from pathlib import Path
 from secrets import token_hex
 from typing import Any
 
+from herbenzo.config import get_settings, load_project_env
+
+load_project_env()
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 from herbenzo.components.modernizer.modernizer import ENGINE_VERSION, ModernizerEngine
+from herbenzo.enrich_api import router as enrich_router
 from herbenzo.contract_gate import (
     attach_provenance_thread,
     http_error_detail,
@@ -35,7 +40,8 @@ from herbenzo.contract_gate import (
 from herbenzo.services.registries import (
     UnknownIngredient,
     UnknownMarker,
-    _INGREDIENTS,
+    iter_registry_records,
+    merged_ingredient_ids,
 )
 from herbenzo_contracts import CONTRACT_SCHEMA_VERSION
 
@@ -50,7 +56,7 @@ app = FastAPI(
     version="1.0.0",
     description=(
         "Deterministic FormulationSpec → ModernizedSKU service. "
-        "No LLM. Independent UI at GET /."
+        "The modernize path does not call an LLM. Independent UI at GET /."
     ),
 )
 
@@ -76,7 +82,13 @@ def _health_payload() -> dict[str, Any]:
             "drafts": "GET/POST /drafts",
             "draft": "GET/DELETE /drafts/{id}",
             "static": "/static/",
+            "enrich_propose": "POST /enrich/propose",
+            "enrich_candidates": "GET /enrich/candidates",
+            "enrich_candidate": "GET /enrich/candidates/{id}",
+            "enrich_approve": "POST /enrich/candidates/{id}/approve",
+            "enrich_reject": "POST /enrich/candidates/{id}/reject",
         },
+        "enrichment_llm": get_settings().llm_available,
     }
 
 
@@ -111,7 +123,8 @@ def _spec_is_complete(spec: dict[str, Any]) -> bool:
         parsed = validate_inbound_formulation_spec(spec)
     except (ValidationError, ValueError, TypeError):
         return False
-    return all(ing.ingredient_id in _INGREDIENTS for ing in parsed.ingredients)
+    known = merged_ingredient_ids()
+    return all(ing.ingredient_id in known for ing in parsed.ingredients)
 
 
 def _ingredient_count(spec: Any) -> int:
@@ -221,8 +234,8 @@ def health():
 
 @app.get("/ingredients")
 def ingredients():
-    """Stock registry rows the modernizer already uses. Read-only."""
-    return {"ingredients": [_ingredient_row(rec) for rec in _INGREDIENTS.values()]}
+    """Stock rows plus approved overlay rows. Pending enrichment candidates are omitted."""
+    return {"ingredients": [_ingredient_row(rec) for rec in iter_registry_records()]}
 
 
 @app.get("/drafts")
@@ -336,6 +349,21 @@ async def modernize(request: Request):
     except (ValidationError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=http_error_detail(exc)) from exc
 
+    known = merged_ingredient_ids()
+    unknown = [ing.ingredient_id for ing in spec.ingredients if ing.ingredient_id not in known]
+    if unknown:
+        listed = ", ".join(repr(item) for item in unknown)
+        exc = UnknownIngredient(
+            f"{listed} is not in the ingredient registry; "
+            "resolve botanical identity before modernization"
+        )
+        detail = dict(http_error_detail(exc, code="unknown_ingredient"))
+        detail["error"] = "unknown_ingredient"
+        detail["unknown_ids"] = unknown
+        if not all(item in str(detail.get("message") or "") for item in unknown):
+            detail["message"] = str(exc)
+        raise HTTPException(status_code=422, detail=detail)
+
     try:
         # Engine uses local schemas; strip shared-only fields at the boundary.
         sku = _ENGINE.modernize(to_engine_payload(spec))
@@ -368,4 +396,5 @@ async def modernize(request: Request):
     return JSONResponse(content=body)
 
 
+app.include_router(enrich_router)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

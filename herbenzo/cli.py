@@ -5,6 +5,9 @@
     python -m herbenzo.cli adjudicate --pmid 37257749 \
         --subject "Terminalia bellirica" --claim "well tolerated orally" --domain safety
     python -m herbenzo.cli markers
+    python -m herbenzo.cli enrich propose "Bacopa monnieri"
+    python -m herbenzo.cli enrich list
+    python -m herbenzo.cli enrich approve c0123456789abcdef
 """
 
 from __future__ import annotations
@@ -14,9 +17,11 @@ import json
 import pathlib
 import sys
 
+from herbenzo.config import load_project_env
 from herbenzo.pipeline import Pipeline
 from herbenzo.services.adjudication import AdjudicationService
-from herbenzo.services.registries import _INGREDIENTS, StaticRegistriesClient
+from herbenzo.services.enrichment import EnrichmentError, build_enrichment_service
+from herbenzo.services.registries import StaticRegistriesClient, iter_registry_records
 
 
 def _cmd_run(args) -> int:
@@ -76,19 +81,90 @@ def _cmd_adjudicate(args) -> int:
 
 def _cmd_markers(args) -> int:
     client = StaticRegistriesClient()
-    print(f"{'ID':<10} {'BOTANICAL':<26} {'MARKER':<40} {'CID':>10}")
-    for iid, rec in _INGREDIENTS.items():
+    print(f"{'ID':<12} {'BOTANICAL':<26} {'MARKER':<40} {'CID':>10}")
+    for rec in iter_registry_records():
         m = rec.markers[0]
         try:
             cid = client.get_physicochemical_properties(m.marker_name).pubchem_cid
         except Exception:
             cid = "-"
         flag = "  [efflux override]" if m.efflux_substrate else ""
-        print(f"{iid:<10} {rec.botanical_name:<26} {m.marker_name:<40} {cid:>10}{flag}")
+        print(f"{rec.ingredient_id:<12} {rec.botanical_name:<26} {m.marker_name:<40} {cid:>10}{flag}")
+    return 0
+
+
+def _enrichment():
+    return build_enrichment_service()
+
+
+def _cmd_enrich_propose(args) -> int:
+    try:
+        doc = _enrichment().propose(
+            args.query,
+            part_used=args.part,
+            max_markers=args.max_markers,
+            max_pmids=args.max_pmids,
+        )
+    except EnrichmentError as exc:
+        print(f"{exc.code}: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(doc, indent=2))
+    return 0
+
+
+def _cmd_enrich_list(args) -> int:
+    rows = _enrichment().list(status=args.status)
+    if args.json:
+        print(json.dumps({"candidates": rows}, indent=2))
+        return 0
+    print(f"{'ID':<18} {'STATUS':<10} {'PROPOSED':<12} QUERY")
+    for row in rows:
+        print(
+            f"{row.get('candidate_id') or '':<18} {row.get('status') or '':<10} "
+            f"{row.get('proposed_ingredient_id') or '':<12} {row.get('query') or ''}"
+        )
+    return 0
+
+
+def _cmd_enrich_show(args) -> int:
+    try:
+        doc = _enrichment().get(args.candidate_id)
+    except EnrichmentError as exc:
+        print(f"{exc.code}: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(doc, indent=2))
+    return 0
+
+
+def _cmd_enrich_approve(args) -> int:
+    try:
+        doc = _enrichment().approve(
+            args.candidate_id,
+            marker_name=args.marker,
+            part_used=args.part,
+            common_name=args.common_name,
+            note=args.note,
+        )
+    except EnrichmentError as exc:
+        print(f"{exc.code}: {exc}", file=sys.stderr)
+        return 2
+    decision = doc.get("decision") or {}
+    print(f"approved {doc.get('candidate_id')} as {decision.get('ingredient_id')}")
+    return 0
+
+
+def _cmd_enrich_reject(args) -> int:
+    try:
+        doc = _enrichment().reject(args.candidate_id, reason=args.reason or "")
+    except EnrichmentError as exc:
+        print(f"{exc.code}: {exc}", file=sys.stderr)
+        return 2
+    print(f"rejected {doc.get('candidate_id')}")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_project_env()
     p = argparse.ArgumentParser(prog="herbenzo", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -111,6 +187,38 @@ def main(argv: list[str] | None = None) -> int:
 
     m = sub.add_parser("markers", help="list registry ingredients and their markers")
     m.set_defaults(func=_cmd_markers)
+
+    enrich = sub.add_parser("enrich", help="propose and review ingredient candidates")
+    enrich_sub = enrich.add_subparsers(dest="enrich_cmd", required=True)
+
+    propose = enrich_sub.add_parser("propose", help="resolve a species into a pending candidate")
+    propose.add_argument("query")
+    propose.add_argument("--part", default=None, help="plant part to store on the candidate")
+    propose.add_argument("--max-markers", type=int, default=3)
+    propose.add_argument("--max-pmids", type=int, default=5)
+    propose.set_defaults(func=_cmd_enrich_propose)
+
+    listing = enrich_sub.add_parser("list", help="list enrichment candidates")
+    listing.add_argument("--status", choices=["pending", "approved", "rejected"])
+    listing.add_argument("--json", action="store_true")
+    listing.set_defaults(func=_cmd_enrich_list)
+
+    show = enrich_sub.add_parser("show", help="print one candidate evidence bundle")
+    show.add_argument("candidate_id")
+    show.set_defaults(func=_cmd_enrich_show)
+
+    approve = enrich_sub.add_parser("approve", help="promote a pending candidate into the registry")
+    approve.add_argument("candidate_id")
+    approve.add_argument("--marker", default=None)
+    approve.add_argument("--part", default=None)
+    approve.add_argument("--common-name", default=None)
+    approve.add_argument("--note", default=None)
+    approve.set_defaults(func=_cmd_enrich_approve)
+
+    reject = enrich_sub.add_parser("reject", help="reject a pending candidate")
+    reject.add_argument("candidate_id")
+    reject.add_argument("--reason", default="")
+    reject.set_defaults(func=_cmd_enrich_reject)
 
     args = p.parse_args(argv)
     return args.func(args)

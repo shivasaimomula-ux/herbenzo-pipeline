@@ -20,6 +20,9 @@ herbenzo/data/compose_drafts/
 
 # IMPPAT 3.0 local download cache (CC BY-NC-ND 4.0 — never commit)
 data/external/imppat/cache/
+
+# Approved registry overlay and pending enrichment candidates
+herbenzo/data/registry_overlay/
 * 2.py
 * 2.*
 .DS_Store

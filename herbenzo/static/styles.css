@@ -515,6 +515,80 @@ button:active,
   display: none;
 }
 
+.picker {
+  margin: 0.35rem 0 0.85rem;
+}
+
+.suggest {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0.25rem;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.92);
+  max-height: 16rem;
+  overflow: auto;
+}
+
+.suggest button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0.4rem 0.5rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.suggest button:hover,
+.suggest button:focus {
+  background: var(--ok-bg);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.55rem;
+}
+
+.chip {
+  border: 1px solid rgba(15, 107, 92, 0.35);
+  background: var(--ok-bg);
+  color: var(--ok-ink);
+  border-radius: 999px;
+  padding: 0.2rem 0.65rem;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.candidate-list,
+.candidate-detail {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.85rem;
+}
+
+.candidate-card,
+.taxonomy-block {
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.taxonomy-block h4,
+.candidate-card h3 {
+  margin: 0 0 0.35rem;
+  font-family: var(--font-display);
+  font-size: 1rem;
+}
+
+.taxonomy-block p,
+.candidate-card p {
+  margin: 0.2rem 0;
+  font-size: 0.86rem;
+}
+
 .raw-actions {
   margin-bottom: 0.75rem;
 }

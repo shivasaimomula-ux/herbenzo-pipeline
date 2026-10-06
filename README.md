@@ -36,12 +36,12 @@ Open the **independent Stage B UI** in a browser:
 http://127.0.0.1:8003/
 ```
 
-**Compose** (default tab) builds a FormulationSpec without hand-editing JSON:
+**Compose** (default tab) builds a FormulationSpec without hand-editing JSON. `herbenzo-contracts` `FormulationSpec.ingredients` is already a list, so a polyherbal formula (Triphala, Chyawanprash) is one product name plus many registry rows. This repo does not add a `role` field; the shared ingredient object has part, amount, extract ratio, and marker.
 
-1. Set formulation id, product name, finished form (preset or any free text), market, servings per day, and confidence.
-2. Pick one or more registry ingredients. Botanical name, common name, and part fill from that row. Enter **amount as mg per serving** (`quantity_mg`). Extract ratio (`10:1`) and a standardization marker + percent are optional.
-3. The **FormulationSpec preview** is the JSON that will be posted.
-4. **Run Modernize** calls the existing `POST /modernize` and renders the ModernizedSKU. Advisory flags on the response (including `classical_active_marker_gap`, if a response includes it) show as a banner. They are not errors. Unknown ingredient ids still return **422**.
+1. Set formulation id, product name (the formula, not a single herb), finished form (preset or any free text), market, servings per day, and confidence.
+2. Search the registry and add every herb. The picker reads **only** `GET /ingredients` (stock rows plus approved overlay rows). Each selected row has its own part, amount (mg per serving), extract ratio, and standardization marker. Pending enrichment candidates are not in that list.
+3. The **FormulationSpec preview** is the JSON that will be posted, including every selected `ingredient_id`.
+4. **Run Modernize** calls the existing `POST /modernize` and renders the ModernizedSKU. Advisory flags on the response (including `classical_active_marker_gap`, if a response includes it) show as a banner. They are not errors. Any unknown ingredient id still returns **422** (`unknown_ingredient`) and the response names that id.
 
 **Advanced / Raw JSON** is the previous paste-or-upload path.
 
@@ -66,6 +66,11 @@ This UI is Stage B only — not embedded in C/E. It does not change the Moderniz
 | `GET` | `/drafts/{id}` | Load one draft (`spec` is the saved form) |
 | `DELETE` | `/drafts/{id}` | Delete a draft |
 | `POST` | `/modernize` | Body: `FormulationSpec` (herbenzo-contracts) → `ModernizedSKU` |
+| `POST` | `/enrich/propose` | Resolve a species into a **pending** evidence bundle. Not added to the registry |
+| `GET` | `/enrich/candidates` | List candidates (`?status=pending\|approved\|rejected`) |
+| `GET` | `/enrich/candidates/{id}` | Evidence bundle, including chemical taxonomy |
+| `POST` | `/enrich/candidates/{id}/approve` | Promote one PubChem-backed marker to a curated `HB-*` overlay row |
+| `POST` | `/enrich/candidates/{id}/reject` | Record a rejection. The id stays unknown to Stage B |
 
 ```bash
 curl -s http://127.0.0.1:8003/health | python3 -m json.tool
@@ -102,7 +107,12 @@ python -m herbenzo.cli run examples/ashwagandha.json -o out/report.json
 |---|---|
 | `run <spec.json> [-o out.json] [--offline]` | Full pipeline; writes an auditable report |
 | `adjudicate --pmid … --subject … --claim … [--domain safety]` | Adjudicate a single citation |
-| `markers` | List registry ingredients, markers and PubChem CIDs |
+| `markers` | List registry ingredients (stock plus approved overlay), markers and PubChem CIDs |
+| `enrich propose "<species or common name>" [--part root]` | Store a pending enrichment candidate |
+| `enrich list [--status pending]` | List candidates |
+| `enrich show <candidate-id>` | Print one evidence bundle |
+| `enrich approve <candidate-id> [--marker NAME]` | Promote a candidate into the registry overlay |
+| `enrich reject <candidate-id> [--reason TEXT]` | Reject a candidate |
 
 `--offline` uses only cached descriptors and makes no network calls — use it for
 CI and for reproducible golden-set runs.
@@ -185,6 +195,19 @@ $ python -m herbenzo.cli adjudicate --pmid 37257749 \
 
 ---
 
+## Ingredient enrichment
+
+The stock registry stays the curated `HB-*` table. Enrichment grows it only after a person approves a candidate.
+
+1. **Propose.** `POST /enrich/propose` with a species or common name. NCBI Taxonomy resolves the organism. Candidate marker CIDs come from PubChem (E-utilities `pccompound` search, then PUG-REST properties). PubMed, Gene, and Protein supply citations and organism-linked records. Chemical taxonomy is attached per marker: ClassyFire/ChemOnt kingdom → superclass → class → subclass → direct parent (PubChem classification when it is complete, otherwise the keyless ClassyFire API by InChIKey) and NP Classifier pathway / superclass / class from GNPS when a SMILES string is present. A missing classification is stored as `unavailable`; it does not fail the proposal.
+2. **Enrich.** Physicochemical numbers (molecular weight, XLogP, TPSA, H-bond counts, rotatable bonds, CID) are copied from PubChem with source URL and retrieval time. The optional LLM only ranks the PubChem marker names and writes a justification. If `HERBENZO_LLM_API_KEY` is unset, that step is `unavailable` and the candidate is still stored. Numeric keys in an LLM payload are discarded.
+3. **Gate.** The bundle is a pending JSON file under `herbenzo/data/registry_overlay/candidates/` (`HERBENZO_REGISTRY_DIR` overrides the directory). It does not appear in `GET /ingredients`. Submitting its proposed id to `POST /modernize` returns **422** `unknown_ingredient`.
+4. **Commit.** Approve assigns the proposed `HB-*` id and writes `approved/<id>.json`, including the PubChem descriptor record Stage B needs. Reject records the decision and does not create a row. After approval, Compose and Stage B treat the row like a stock ingredient.
+
+NCBI E-utilities and PubChem PUG-REST work with no API key (3 requests/second). Set `NCBI_API_KEY` to use 10 requests/second. `NCBI_EMAIL` and `NCBI_TOOL` are sent when set. Copy `.env.example` to `.env` at the repo root; process environment variables win over that file. Do not commit `.env`.
+
+The **Review candidates** tab is separate from the Compose picker. It does not add unapproved herbs to the formulation.
+
 ## Layout
 
 | Path | Role |
@@ -192,6 +215,11 @@ $ python -m herbenzo.cli adjudicate --pmid 37257749 \
 | `herbenzo/schemas/contracts.py` | Handoff contracts, confidence floor, citation guards |
 | `herbenzo/clients/pubmed.py` | NCBI E-utilities — search, fetch; shared PMID cache (`herbenzo-pubmed-cache`) |
 | `herbenzo/clients/pubchem.py` | PubChem PUG-REST — CID resolution and descriptors |
+| `herbenzo/clients/eutils.py` | Enrichment E-utilities client (taxonomy, PubMed, gene, protein, pccompound) with NCBI rate limits |
+| `herbenzo/clients/chemclass.py` | ClassyFire/ChemOnt and NP Classifier lookups, cached |
+| `herbenzo/clients/llm.py` | Optional OpenAI-compatible justification. Skipped when no key is set |
+| `herbenzo/services/enrichment.py` | Propose → enrich → approve/reject |
+| `herbenzo/config.py` | Loads repo-root `.env` without overriding existing environment variables |
 | `herbenzo/services/evidence.py` | Evidence store + manifest stamps over the shared cache |
 | `herbenzo/services/adjudication.py` | Citation adjudication service |
 | `herbenzo/services/registries.py` | Ingredient identity, markers, dose normalization |
@@ -202,6 +230,7 @@ $ python -m herbenzo.cli adjudicate --pmid 37257749 \
 | `herbenzo/api.py` | FastAPI: UI at `/`, `GET /health`, `GET /ingredients`, `/drafts`, `POST /modernize` on `:8003` |
 | `herbenzo/static/` | Independent B UI (compose form, drafts, raw JSON) |
 | `herbenzo/data/compose_drafts/` | On-disk compose drafts (gitignored; created on save) |
+| `herbenzo/data/registry_overlay/` | Pending candidates and approved `HB-*` rows (gitignored; `HERBENZO_REGISTRY_DIR` overrides) |
 | `herbenzo/contract_gate.py` | Shared-package FormulationSpec / ModernizedSKU gates |
 | `cache/` | On-disk response cache — delete to force re-retrieval |
 
